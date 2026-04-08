@@ -33,15 +33,27 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flower Server")
-    parser.add_argument("--rounds", type=int, default=5, help="Số vòng lặp FL")
+    parser.add_argument("--rounds", type=int, default=5)
     args = parser.parse_args()
+
+    # --- BƯỚC NẠP PRETRAIN ---
+    print("Đang nạp Pretrain Model làm trọng số khởi điểm...")
+    dummy_model = CNN14()
+    # Thay bằng tên file thực tế của bạn
+    dummy_model.load_state_dict(torch.load("pretrained_audio.pth", map_location="cpu"))
+    
+    # Ép kiểu PyTorch sang kiểu NumPy của Flower
+    initial_weights = [val.cpu().numpy() for _, val in dummy_model.state_dict().items()]
+    initial_parameters = fl.common.ndarrays_to_parameters(initial_weights)
+    # -------------------------
 
     strategy = SaveModelStrategy(
         min_fit_clients=2,
         min_available_clients=2, 
+        initial_parameters=initial_parameters # TRUYỀN TẠ GỐC VÀO ĐÂY
     )
     
-    print(f"Khởi động FL Server, chờ Client... (Số vòng cấu hình: {args.rounds})")
+    print(f"Khởi động FL Server... (Số vòng cấu hình: {args.rounds})")
     fl.server.start_server(
         server_address="0.0.0.0:8080",
         config=fl.server.ServerConfig(num_rounds=args.rounds),
