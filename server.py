@@ -40,7 +40,7 @@ if __name__ == "__main__":
     print("Đang nạp Pretrain Model làm trọng số khởi điểm...")
     dummy_model = CNN14()
     # Thay bằng tên file thực tế của bạn
-    dummy_model.load_state_dict(torch.load("pretrained_audio.pth", map_location="cpu"))
+    dummy_model.load_state_dict(torch.load("best_global_audio.pth", map_location="cpu"))
     
     # Ép kiểu PyTorch sang kiểu NumPy của Flower
     initial_weights = [val.cpu().numpy() for _, val in dummy_model.state_dict().items()]
@@ -58,4 +58,5 @@ if __name__ == "__main__":
         server_address="0.0.0.0:8080",
         config=fl.server.ServerConfig(num_rounds=args.rounds),
         strategy=strategy,
+        grpc_max_message_length=1024 * 1024 * 1024
     )
