@@ -25,7 +25,8 @@ RUN pip install --no-cache-dir \
     "bcrypt<4.1" \
     torch \
     torchaudio \
-    torchvision
+    torchvision \
+    --index-url https://download.pytorch.org/whl/cpu
 
 COPY backend/ /app/backend/
 COPY shared/ /app/shared/
