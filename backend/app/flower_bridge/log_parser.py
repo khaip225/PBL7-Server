@@ -121,11 +121,13 @@ class FlowerLogParser:
 
         client_metrics = payload.get("client_metrics", [])
         loss = payload.get("loss")
+        accuracy = payload.get("accuracy")
         num_clients = payload.get("num_clients", 0)
         num_skipped = payload.get("num_skipped", 0)
 
         if existing:
             existing.loss = loss
+            existing.accuracy = accuracy
             existing.num_clients = num_clients
             existing.num_skipped = num_skipped
             existing.client_metrics = client_metrics
@@ -137,6 +139,7 @@ class FlowerLogParser:
                 num_clients=num_clients,
                 num_skipped=num_skipped,
                 loss=loss,
+                accuracy=accuracy,
                 client_metrics=client_metrics,
                 aggregated_at=datetime.now(timezone.utc),
             )
