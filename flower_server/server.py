@@ -71,12 +71,24 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
             print(f"{'='*70}")
 
             total_samples = 0
+            total_loss = 0.0
+            client_metrics = []
             for client_proxy, fit_res in eligible_results:
                 client_id = getattr(client_proxy, "cid", "unknown")
                 loss_val = fit_res.metrics.get('loss', 0.0) if fit_res.metrics else 0.0
+                acc_val = fit_res.metrics.get('accuracy') if fit_res.metrics else None
                 print(f"  ✅ Client {client_id}: {fit_res.num_examples} samples, Loss: {loss_val:.4f}")
                 total_samples += fit_res.num_examples
-            print(f"  📈 Total samples used for aggregation: {total_samples}")
+                total_loss += loss_val * fit_res.num_examples
+                client_metrics.append({
+                    "client_id": client_id,
+                    "client_name": client_id,
+                    "num_samples": fit_res.num_examples,
+                    "loss": round(loss_val, 6),
+                    "accuracy": round(acc_val, 6) if acc_val is not None else None,
+                })
+            avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+            print(f"  📈 Total samples: {total_samples}, Avg Loss: {avg_loss:.4f}")
 
             ndarrays = fl.common.parameters_to_ndarrays(aggregated_weights)
             dummy_model = self.task_cfg["model_cls"]()
@@ -99,8 +111,8 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
             print(f"✅ Da cap nhat: {self.task_cfg['best_model_file']}")
             print(f"{'='*70}\n")
 
-            # Emit structured events for LogParser
-            print(f"EVENT:round_completed:{json.dumps({'task': self.task_key, 'round': server_round, 'num_clients': len(eligible_results), 'total_samples': total_samples})}")
+            # Emit structured events for LogParser — includes loss + per-client metrics
+            print(f"EVENT:round_completed:{json.dumps({'task': self.task_key, 'round': server_round, 'num_clients': len(eligible_results), 'num_skipped': len(skipped_clients), 'total_samples': total_samples, 'loss': round(avg_loss, 6), 'client_metrics': client_metrics})}")
             print(f"EVENT:checkpoint_saved:{json.dumps({'task': self.task_key, 'round': server_round, 'path': save_path})}")
 
         return aggregated_weights, aggregated_metrics

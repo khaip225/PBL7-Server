@@ -1,9 +1,13 @@
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from ..models.event_log import EventLog
+from ..models.round import Round
+from ..models.checkpoint import Checkpoint
 from ..database import async_session
 from ..websocket.manager import ws_manager
 from ..websocket.events import WSEvent
@@ -76,7 +80,7 @@ class FlowerLogParser:
     async def _emit(self, event_type: WSEventType, payload: dict, severity: EventSeverity):
         payload["job_id"] = self.job_id
 
-        # Persist to DB
+        # Persist EventLog + Round/Checkpoint records
         async with async_session() as db:
             event = EventLog(
                 job_id=uuid.UUID(self.job_id) if self.job_id else None,
@@ -86,6 +90,15 @@ class FlowerLogParser:
                 created_at=datetime.now(timezone.utc),
             )
             db.add(event)
+
+            # Create Round record on ROUND_COMPLETED
+            if event_type == WSEventType.ROUND_COMPLETED and self.job_id:
+                await self._save_round(db, payload)
+
+            # Create Checkpoint record on CHECKPOINT_SAVED
+            if event_type == WSEventType.CHECKPOINT_SAVED and self.job_id:
+                await self._save_checkpoint(db, payload)
+
             await db.commit()
 
         # Broadcast via WebSocket
@@ -94,3 +107,65 @@ class FlowerLogParser:
             await ws_manager.send_to_job(self.job_id, ws_event)
         else:
             await ws_manager.broadcast(ws_event)
+
+    async def _save_round(self, db: AsyncSession, payload: dict):
+        round_num = payload.get("round")
+        if round_num is None:
+            return
+        job_id = uuid.UUID(self.job_id)
+
+        # Check existing
+        existing = (await db.execute(
+            select(Round).where(Round.job_id == job_id, Round.round_number == int(round_num))
+        )).scalar_one_or_none()
+
+        client_metrics = payload.get("client_metrics", [])
+        loss = payload.get("loss")
+        num_clients = payload.get("num_clients", 0)
+        num_skipped = payload.get("num_skipped", 0)
+
+        if existing:
+            existing.loss = loss
+            existing.num_clients = num_clients
+            existing.num_skipped = num_skipped
+            existing.client_metrics = client_metrics
+            existing.aggregated_at = datetime.now(timezone.utc)
+        else:
+            round_record = Round(
+                job_id=job_id,
+                round_number=int(round_num),
+                num_clients=num_clients,
+                num_skipped=num_skipped,
+                loss=loss,
+                client_metrics=client_metrics,
+                aggregated_at=datetime.now(timezone.utc),
+            )
+            db.add(round_record)
+
+    async def _save_checkpoint(self, db: AsyncSession, payload: dict):
+        path = payload.get("path")
+        if not path:
+            return
+        job_id = uuid.UUID(self.job_id)
+        round_num = payload.get("round", 0)
+
+        file_size = None
+        if os.path.exists(path):
+            file_size = os.path.getsize(path)
+
+        # Mark previous checkpoints for this job as not best
+        if payload.get("is_best"):
+            existing_best = (await db.execute(
+                select(Checkpoint).where(Checkpoint.job_id == job_id, Checkpoint.is_best == True)
+            )).scalars().all()
+            for cp in existing_best:
+                cp.is_best = False
+
+        checkpoint = Checkpoint(
+            job_id=job_id,
+            round_number=int(round_num),
+            file_path=path,
+            file_size_bytes=file_size,
+            is_active=False,
+        )
+        db.add(checkpoint)
