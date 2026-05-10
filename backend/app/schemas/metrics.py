@@ -8,7 +8,7 @@ class ClientRoundMetric(BaseModel):
     client_name: str
     num_samples: int
     loss: float
-    accuracy: float
+    accuracy: float | None = None
 
 
 class RoundMetricsResponse(BaseModel):
