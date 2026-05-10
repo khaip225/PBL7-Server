@@ -12,6 +12,11 @@ const config: Config = {
         background: "var(--background)",
         foreground: "var(--foreground)",
       },
+      animation: {
+        "lung-inhale": "lungInhale 4s ease-in-out infinite",
+        "lung-inhale-right": "lungInhale 4s ease-in-out 0.5s infinite",
+        "card-enter": "cardEnter 0.6s ease-out forwards",
+      },
     },
   },
   plugins: [],

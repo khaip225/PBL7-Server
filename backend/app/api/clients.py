@@ -60,6 +60,16 @@ async def client_heartbeat(client_id: str, data: ClientHeartbeat, db: AsyncSessi
     return ClientResponse.model_validate(client)
 
 
+@router.post("/{client_id}/offline", response_model=ClientResponse)
+async def client_offline(client_id: str, db: AsyncSession = Depends(get_db)):
+    from uuid import UUID
+    svc = ClientService(db)
+    client = await svc.set_offline(UUID(client_id))
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return ClientResponse.model_validate(client)
+
+
 @router.delete("/{client_id}")
 async def delete_client(client_id: str, db: AsyncSession = Depends(get_db)):
     from uuid import UUID

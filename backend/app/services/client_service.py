@@ -60,6 +60,16 @@ class ClientService:
         await self.db.refresh(client)
         return client
 
+    async def set_offline(self, client_id: uuid.UUID) -> Client | None:
+        client = await self.db.get(Client, client_id)
+        if not client:
+            return None
+        client.status = ClientStatus.OFFLINE
+        client.last_heartbeat = datetime.now(timezone.utc)
+        await self.db.commit()
+        await self.db.refresh(client)
+        return client
+
     async def delete(self, client_id: uuid.UUID) -> bool:
         client = await self.db.get(Client, client_id)
         if not client:

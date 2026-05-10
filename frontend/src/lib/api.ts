@@ -1,10 +1,28 @@
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+function getToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )pbl7_auth=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
+  const token = getToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string>),
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  if (res.status === 401) {
+    if (typeof document !== "undefined") {
+      document.cookie = "pbl7_auth=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    }
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     throw new Error(`API error ${res.status}: ${await res.text()}`);
   }
@@ -66,4 +84,9 @@ export const api = {
     delete: (key: string) => request<any>(`/api/settings/${key}`, { method: "DELETE" }),
   },
   health: () => request<any>("/api/health"),
+  auth: {
+    login: (username: string, password: string) =>
+      request<any>("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+    me: () => request<any>("/api/auth/me"),
+  },
 };

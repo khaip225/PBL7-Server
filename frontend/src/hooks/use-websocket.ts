@@ -35,7 +35,8 @@ export function useWSEvent(eventType: string, jobId?: string) {
   useEffect(() => {
     if (!wsClient) return;
     wsClient.subscribe(jobId);
-    return wsClient.on(eventType, (msg) => setLastEvent(msg));
+    const unsub = wsClient.on(eventType, (msg) => setLastEvent(msg));
+    return () => { unsub(); };
   }, [eventType, jobId]);
 
   return lastEvent;

@@ -93,3 +93,16 @@ export interface WSMessage {
   payload: Record<string, unknown>;
   timestamp: string;
 }
+
+export interface UserResponse {
+  id: string;
+  username: string;
+  display_name: string;
+  is_active: boolean;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  user: UserResponse;
+}

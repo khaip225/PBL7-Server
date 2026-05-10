@@ -73,11 +73,11 @@ export default function ClientsPage() {
                   </span>
                 </td>
                 <td className="p-4 text-gray-400 text-xs">
-                  <div className="flex items-center gap-1"><Cpu size={12} /> {client.hardware_info?.gpu_name || "N/A"}</div>
-                  <div className="flex items-center gap-1 mt-0.5"><HardDrive size={12} /> {client.hardware_info?.ram_total_gb || "?"} GB RAM</div>
+                  <div className="flex items-center gap-1"><Cpu size={12} /> {String(client.hardware_info?.gpu_name || "N/A")}</div>
+                  <div className="flex items-center gap-1 mt-0.5"><HardDrive size={12} /> {String(client.hardware_info?.ram_total_gb || "?")} GB RAM</div>
                 </td>
                 <td className="p-4 text-gray-400 text-xs">
-                  {client.dataset_info?.total_samples ?? "?"} samples
+                  {String(client.dataset_info?.total_samples ?? "?")} samples
                 </td>
                 <td className="p-4 text-gray-400">{client.latency_ms?.toFixed(0)} ms</td>
                 <td className="p-4 text-gray-500 text-xs">

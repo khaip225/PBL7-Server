@@ -47,7 +47,10 @@ class WSClient {
   }
 
   disconnect() {
-    this.reconnectTimer && clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.ws?.close();
   }
 }

@@ -4,10 +4,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .database import engine, Base, async_session
 from .api.router import api_router
+from .api.auth import router as auth_router
 from .websocket.manager import ws_manager
 from .websocket.events import WSEvent
 from .services.flower_manager import flower_manager, set_flower_manager_db_factory
 from .services.settings_service import SettingsService
+from .services.auth_service import seed_default_admin
 from shared.types import WSEventType
 
 settings = get_settings()
@@ -23,6 +25,10 @@ async def lifespan(app: FastAPI):
     async with async_session() as db:
         svc = SettingsService(db)
         await svc.seed_defaults()
+
+    # Seed default admin user
+    async with async_session() as db:
+        await seed_default_admin(db, settings)
 
     # Wire DB factory to flower manager
     set_flower_manager_db_factory(async_session)
@@ -49,6 +55,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Auth routes (unprotected)
+app.include_router(auth_router)
+
+# Protected API routes
 app.include_router(api_router)
 
 

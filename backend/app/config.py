@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     CLIENT_TIMEOUT_SECONDS: int = 60
     MAX_CONCURRENT_JOBS: int = 2
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    JWT_SECRET_KEY: str = "pbl7-dev-secret-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 480
+    DEFAULT_ADMIN_USERNAME: str = "admin"
+    DEFAULT_ADMIN_PASSWORD: str = "admin123"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
