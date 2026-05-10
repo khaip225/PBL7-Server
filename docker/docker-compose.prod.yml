@@ -29,6 +29,11 @@ services:
       DATABASE_URL_SYNC: postgresql://${DB_USER:-pbl7}:${DB_PASSWORD:-pbl7_secret}@postgres:5432/${DB_NAME:-pbl7_fl}
       DEBUG: "false"
       CORS_ORIGINS: '["${VPS_DOMAIN:-http://localhost}"]'
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-480}
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
     depends_on:
       postgres:
         condition: service_healthy

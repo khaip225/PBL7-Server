@@ -22,7 +22,10 @@ RUN pip install --no-cache-dir \
     flwr \
     torch \
     torchvision \
-    torchaudio
+    torchaudio \
+    python-jose[cryptography] \
+    "passlib[bcrypt]" \
+    "bcrypt<4.1"
 
 COPY backend/ /app/backend/
 COPY shared/ /app/shared/
