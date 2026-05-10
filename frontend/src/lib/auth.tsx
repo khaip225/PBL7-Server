@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (savedToken) {
       setToken(savedToken);
       // Validate token by fetching /me
-      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/auth/me`, {
+      fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/auth/me`, {
         headers: { Authorization: `Bearer ${savedToken}` },
       })
         .then((res) => {
@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (username: string, password: string) => {
-    const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
     const res = await fetch(`${BASE_URL}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
