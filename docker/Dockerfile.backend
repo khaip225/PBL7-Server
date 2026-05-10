@@ -22,11 +22,13 @@ RUN pip install --no-cache-dir \
     flwr \
     python-jose[cryptography] \
     "passlib[bcrypt]" \
-    "bcrypt<4.1" \
+    "bcrypt<4.1"
+
+# Install CPU-only PyTorch (smaller, no CUDA)
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
     torch \
     torchaudio \
-    torchvision \
-    --index-url https://download.pytorch.org/whl/cpu
+    torchvision
 
 COPY backend/ /app/backend/
 COPY shared/ /app/shared/
