@@ -34,6 +34,7 @@ services:
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-480}
       DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
+      CLIENT_API_KEY: ${CLIENT_API_KEY:-pbl7-client-api-key-change-in-production}
     depends_on:
       postgres:
         condition: service_healthy

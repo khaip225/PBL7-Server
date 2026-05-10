@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 480
     DEFAULT_ADMIN_USERNAME: str = "admin"
     DEFAULT_ADMIN_PASSWORD: str = "admin123"
+    CLIENT_API_KEY: str = "pbl7-client-api-key-change-in-production"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
