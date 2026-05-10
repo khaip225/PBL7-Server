@@ -24,7 +24,8 @@ RUN pip install --no-cache-dir \
     "passlib[bcrypt]" \
     "bcrypt<4.1" \
     torch \
-    torchaudio
+    torchaudio \
+    torchvision
 
 COPY backend/ /app/backend/
 COPY shared/ /app/shared/
