@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-pbl7}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-pbl7_secret}
+      POSTGRES_DB: ${DB_NAME:-pbl7_fl}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-pbl7} -d ${DB_NAME:-pbl7_fl}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pbl7-net
+    # No port exposed to host — internal only
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-pbl7}:${DB_PASSWORD:-pbl7_secret}@postgres:5432/${DB_NAME:-pbl7_fl}
+      DATABASE_URL_SYNC: postgresql://${DB_USER:-pbl7}:${DB_PASSWORD:-pbl7_secret}@postgres:5432/${DB_NAME:-pbl7_fl}
+      DEBUG: "false"
+      CORS_ORIGINS: '["${VPS_DOMAIN:-http://localhost}"]'
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-480}
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
+      CLIENT_API_KEY: ${CLIENT_API_KEY:-pbl7-client-api-key-change-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - models_data:/app/aggregated_models
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}
+    networks:
+      - pbl7-net
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+    depends_on:
+      - backend
+    networks:
+      - pbl7-net
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - pbl7-net
+
+volumes:
+  pgdata:
+  models_data:
+
+networks:
+  pbl7-net:
+    driver: bridge
