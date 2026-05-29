@@ -60,6 +60,8 @@ export const api = {
     overview: () => request<any>("/api/metrics/overview"),
     convergence: (jobId: string) => request<any>(`/api/metrics/job/${jobId}/convergence`),
     communication: (jobId: string) => request<any>(`/api/metrics/job/${jobId}/communication`),
+    prototypeEvolution: (jobId: string) => request<any>(`/api/metrics/job/${jobId}/prototype-evolution`),
+    compare: (jobIds: string[]) => request<any>(`/api/metrics/compare?job_ids=${jobIds.join(",")}`),
   },
   models: {
     list: (params?: Record<string, string>) => {

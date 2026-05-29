@@ -43,6 +43,9 @@ export interface RoundMetrics {
   round_number: number;
   loss: number | null;
   accuracy: number | null;
+  auroc_macro: number | null;
+  per_class_auroc: Record<string, number> | null;
+  prototype_data: Record<string, unknown> | null;
   num_clients: number;
   num_skipped: number;
   duration_seconds: number | null;
@@ -55,7 +58,18 @@ export interface ClientRoundMetric {
   client_name: string;
   num_samples: number;
   loss: number;
-  accuracy: number;
+  accuracy: number | null;
+  auroc_macro: number | null;
+  per_class_auroc: Record<string, number>;
+}
+
+export interface PrototypeEvolution {
+  job_id: string;
+  rounds: number[];
+  ontology_alignment: number[];
+  positive_similarity: number[];
+  negative_similarity: number[];
+  similarity_matrix: number[][][];
 }
 
 export interface Checkpoint {
@@ -86,6 +100,7 @@ export interface OverviewMetrics {
   completed_jobs: number;
   total_checkpoints: number;
   best_accuracy: number | null;
+  best_auroc: number | null;
 }
 
 export interface WSMessage {

@@ -122,12 +122,28 @@ class FlowerLogParser:
         client_metrics = payload.get("client_metrics", [])
         loss = payload.get("loss")
         accuracy = payload.get("accuracy")
+        auroc_macro = payload.get("auroc_macro")
+        auprc_macro = payload.get("auprc_macro")
+        f1_macro = payload.get("f1_macro")
+        precision_macro = payload.get("precision_macro")
+        recall_macro = payload.get("recall_macro")
+        per_class_auroc = payload.get("per_class_auroc")
+        per_class_auprc = payload.get("per_class_auprc")
+        prototype_data = payload.get("prototype_data")
         num_clients = payload.get("num_clients", 0)
         num_skipped = payload.get("num_skipped", 0)
 
         if existing:
             existing.loss = loss
             existing.accuracy = accuracy
+            existing.auroc_macro = auroc_macro
+            existing.auprc_macro = auprc_macro
+            existing.f1_macro = f1_macro
+            existing.precision_macro = precision_macro
+            existing.recall_macro = recall_macro
+            existing.per_class_auroc = per_class_auroc
+            existing.per_class_auprc = per_class_auprc
+            existing.prototype_data = prototype_data
             existing.num_clients = num_clients
             existing.num_skipped = num_skipped
             existing.client_metrics = client_metrics
@@ -140,6 +156,14 @@ class FlowerLogParser:
                 num_skipped=num_skipped,
                 loss=loss,
                 accuracy=accuracy,
+                auroc_macro=auroc_macro,
+                auprc_macro=auprc_macro,
+                f1_macro=f1_macro,
+                precision_macro=precision_macro,
+                recall_macro=recall_macro,
+                per_class_auroc=per_class_auroc,
+                per_class_auprc=per_class_auprc,
+                prototype_data=prototype_data,
                 client_metrics=client_metrics,
                 aggregated_at=datetime.now(timezone.utc),
             )
