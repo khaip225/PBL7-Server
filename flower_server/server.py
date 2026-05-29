@@ -91,39 +91,90 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
             total_samples = 0
             total_loss = 0.0
             total_auroc = 0.0
-            auroc_count = 0
+            total_auprc = 0.0
+            total_f1 = 0.0
+            total_precision = 0.0
+            total_recall = 0.0
+            metric_count = 0  # count of clients with valid auroc
             client_metrics = []
             class_names = self.task_cfg.get("class_names", [])
+            # Aggregate per-class metrics weighted by samples
+            aggregated_per_class_auroc = {}
+            aggregated_per_class_auprc = {}
             for client_proxy, fit_res in eligible_results:
                 client_id = getattr(client_proxy, "cid", "unknown")
                 loss_val = fit_res.metrics.get('loss', 0.0) if fit_res.metrics else 0.0
                 auroc_val = fit_res.metrics.get('auroc_macro') if fit_res.metrics else None
-                per_class = fit_res.metrics.get('per_class_auroc', {}) if fit_res.metrics else {}
+                auprc_val = fit_res.metrics.get('auprc_macro') if fit_res.metrics else None
+                f1_val = fit_res.metrics.get('f1_macro') if fit_res.metrics else None
+                prec_val = fit_res.metrics.get('precision_macro') if fit_res.metrics else None
+                rec_val = fit_res.metrics.get('recall_macro') if fit_res.metrics else None
+                per_class_auroc = fit_res.metrics.get('per_class_auroc', {}) if fit_res.metrics else {}
+                per_class_auprc = fit_res.metrics.get('per_class_auprc', {}) if fit_res.metrics else {}
                 print(f"  ✅ Client {client_id}: {fit_res.num_examples} samples, Loss: {loss_val:.4f}", end="")
                 if auroc_val is not None:
-                    print(f", AUROC macro: {auroc_val:.4f}")
-                else:
-                    print()
+                    print(f", AUROC: {auroc_val:.4f}", end="")
+                if f1_val is not None:
+                    print(f", F1: {f1_val:.4f}", end="")
+                print()
                 total_samples += fit_res.num_examples
                 total_loss += loss_val * fit_res.num_examples
                 if auroc_val is not None:
                     total_auroc += auroc_val * fit_res.num_examples
-                    auroc_count += fit_res.num_examples
+                if auprc_val is not None:
+                    total_auprc += auprc_val * fit_res.num_examples
+                if f1_val is not None:
+                    total_f1 += f1_val * fit_res.num_examples
+                if prec_val is not None:
+                    total_precision += prec_val * fit_res.num_examples
+                if rec_val is not None:
+                    total_recall += rec_val * fit_res.num_examples
+                if auroc_val is not None:
+                    metric_count += fit_res.num_examples
+                # Aggregate per-class AUROC
+                for k, v in per_class_auroc.items():
+                    if k not in aggregated_per_class_auroc:
+                        aggregated_per_class_auroc[k] = {"sum": 0.0, "count": 0}
+                    aggregated_per_class_auroc[k]["sum"] += v * fit_res.num_examples
+                    aggregated_per_class_auroc[k]["count"] += fit_res.num_examples
+                # Aggregate per-class AUPRC
+                for k, v in per_class_auprc.items():
+                    if k not in aggregated_per_class_auprc:
+                        aggregated_per_class_auprc[k] = {"sum": 0.0, "count": 0}
+                    aggregated_per_class_auprc[k]["sum"] += v * fit_res.num_examples
+                    aggregated_per_class_auprc[k]["count"] += fit_res.num_examples
                 client_metrics.append({
                     "client_id": client_id,
                     "client_name": client_id,
                     "num_samples": fit_res.num_examples,
                     "loss": round(loss_val, 6),
                     "auroc_macro": round(auroc_val, 6) if auroc_val is not None else None,
-                    "per_class_auroc": {k: round(v, 6) for k, v in per_class.items()} if per_class else {},
+                    "auprc_macro": round(auprc_val, 6) if auprc_val is not None else None,
+                    "f1_macro": round(f1_val, 6) if f1_val is not None else None,
+                    "precision_macro": round(prec_val, 6) if prec_val is not None else None,
+                    "recall_macro": round(rec_val, 6) if rec_val is not None else None,
+                    "per_class_auroc": {k: round(v, 6) for k, v in per_class_auroc.items()} if per_class_auroc else {},
+                    "per_class_auprc": {k: round(v, 6) for k, v in per_class_auprc.items()} if per_class_auprc else {},
                 })
             avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
-            avg_auroc = total_auroc / auroc_count if auroc_count > 0 else None
+            avg_auroc = total_auroc / metric_count if metric_count > 0 else None
+            avg_auprc = total_auprc / metric_count if metric_count > 0 else None
+            avg_f1 = total_f1 / metric_count if metric_count > 0 else None
+            avg_precision = total_precision / metric_count if metric_count > 0 else None
+            avg_recall = total_recall / metric_count if metric_count > 0 else None
+            # Final per-class aggregates
+            final_per_class_auroc = {}
+            for k, v in aggregated_per_class_auroc.items():
+                final_per_class_auroc[k] = round(v["sum"] / v["count"], 6) if v["count"] > 0 else 0.0
+            final_per_class_auprc = {}
+            for k, v in aggregated_per_class_auprc.items():
+                final_per_class_auprc[k] = round(v["sum"] / v["count"], 6) if v["count"] > 0 else 0.0
             print(f"  📈 Total samples: {total_samples}, Avg Loss: {avg_loss:.4f}", end="")
             if avg_auroc is not None:
-                print(f", Avg AUROC: {avg_auroc:.4f}")
-            else:
-                print()
+                print(f", Avg AUROC: {avg_auroc:.4f}", end="")
+            if avg_f1 is not None:
+                print(f", Avg F1: {avg_f1:.4f}", end="")
+            print()
 
             ndarrays = fl.common.parameters_to_ndarrays(aggregated_weights)
             dummy_model = self.task_cfg["model_cls"]()
@@ -146,7 +197,7 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
             print(f"✅ Da cap nhat: {self.task_cfg['best_model_file']}")
             print(f"{'='*70}\n")
 
-            # Emit structured events for LogParser — includes loss, accuracy + per-client metrics
+            # Emit structured events for LogParser — includes all metrics + per-client details
             event_data = {
                 'task': self.task_key,
                 'round': server_round,
@@ -155,6 +206,12 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
                 'total_samples': total_samples,
                 'loss': round(avg_loss, 6),
                 'auroc_macro': round(avg_auroc, 6) if avg_auroc is not None else None,
+                'auprc_macro': round(avg_auprc, 6) if avg_auprc is not None else None,
+                'f1_macro': round(avg_f1, 6) if avg_f1 is not None else None,
+                'precision_macro': round(avg_precision, 6) if avg_precision is not None else None,
+                'recall_macro': round(avg_recall, 6) if avg_recall is not None else None,
+                'per_class_auroc': final_per_class_auroc,
+                'per_class_auprc': final_per_class_auprc,
                 'client_metrics': client_metrics,
             }
             print(f"EVENT:round_completed:{json.dumps(event_data)}")

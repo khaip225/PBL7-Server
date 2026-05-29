@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..services.metrics_service import MetricsService
-from ..schemas.metrics import ConvergenceData
+from ..schemas.metrics import ConvergenceData, PrototypeEvolution
 from ..schemas.metrics import OverviewMetrics
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
@@ -27,6 +27,14 @@ async def get_convergence(job_id: str, db: AsyncSession = Depends(get_db)):
 async def get_communication(job_id: str, db: AsyncSession = Depends(get_db)):
     svc = MetricsService(db)
     return await svc.get_communication_stats(UUID(job_id))
+
+
+@router.get("/job/{job_id}/prototype-evolution", response_model=PrototypeEvolution | None)
+async def get_prototype_evolution(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Get prototype similarity matrix evolution across FL rounds (for alignment jobs)."""
+    svc = MetricsService(db)
+    data = await svc.get_prototype_evolution(UUID(job_id))
+    return data
 
 
 @router.get("/overview", response_model=OverviewMetrics)
