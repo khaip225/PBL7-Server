@@ -29,6 +29,22 @@ class ClientService:
         return await self.db.get(Client, client_id)
 
     async def register(self, data: ClientCreate) -> Client:
+        # UPSERT by client_name — one hospital = one client
+        q = select(Client).where(Client.client_name == data.client_name)
+        result = await self.db.execute(q)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.client_host = data.client_host
+            if data.task_type is not None:
+                existing.task_type = data.task_type
+            existing.hardware_info = data.hardware_info or existing.hardware_info
+            existing.dataset_info = data.dataset_info or existing.dataset_info
+            existing.status = ClientStatus.ONLINE
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
         client = Client(**data.model_dump(), status=ClientStatus.ONLINE)
         self.db.add(client)
         await self.db.commit()
@@ -56,6 +72,10 @@ class ClientService:
             client.status = ClientStatus.ONLINE
         if data.hardware_info:
             client.hardware_info = data.hardware_info
+        if data.task_type is not None:
+            client.task_type = data.task_type
+        if data.dataset_info:
+            client.dataset_info = data.dataset_info
         await self.db.commit()
         await self.db.refresh(client)
         return client
@@ -77,6 +97,25 @@ class ClientService:
         await self.db.delete(client)
         await self.db.commit()
         return True
+
+    async def mark_stale_offline(self, timeout_seconds: int = 60) -> int:
+        """Mark clients as OFFLINE if no heartbeat within timeout_seconds."""
+        cutoff = datetime.now(timezone.utc)
+        # Use Python to filter (SQLAlchemy can't easily add timedelta in all DBs)
+        q = select(Client).where(
+            Client.status.in_([ClientStatus.ONLINE, ClientStatus.TRAINING, ClientStatus.IDLE])
+        )
+        result = await self.db.execute(q)
+        stale_clients = [
+            c for c in result.scalars().all()
+            if c.last_heartbeat is None
+            or (cutoff - c.last_heartbeat).total_seconds() > timeout_seconds
+        ]
+        for client in stale_clients:
+            client.status = ClientStatus.OFFLINE
+        if stale_clients:
+            await self.db.commit()
+        return len(stale_clients)
 
     async def get_overview_stats(self) -> dict:
         total = (await self.db.execute(select(func.count()).select_from(Client))).scalar() or 0

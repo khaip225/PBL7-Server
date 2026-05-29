@@ -4,6 +4,12 @@ from enum import Enum
 class TaskType(str, Enum):
     AUDIO = "audio"
     IMAGE = "image"
+    ALIGNMENT = "alignment"
+
+
+class FLMode(str, Enum):
+    FULL_MODEL = "full"
+    PROTOTYPE_ONLY = "proto"
 
 
 class JobStatus(str, Enum):

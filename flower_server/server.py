@@ -4,28 +4,46 @@ import os
 import json
 import torch
 from collections import OrderedDict
-from cnn14_model import CNN14
-from resnet18_model import ResNet18
-
+from densenet121_model import DenseNet121MultiLabel
+from ast_model import ASTMultiLabel
+from prototype_fl_model import FLPrototypeModel
 
 TASK_CONFIG = {
     "audio": {
-        "model_cls": CNN14,
+        "model_cls": ASTMultiLabel,
+        "num_classes": 2,
+        "class_names": ["Crackle", "Wheeze"],
         "default_port": 8080,
-        "default_pretrained": "pretrained_audio.pth",
+        "default_pretrained": "pretrained_audio_multilabel.pth",
         "min_samples": 300,
         "round_prefix": "audio",
         "best_model_file": "best_global_audio.pth",
         "display_name": "Audio",
+        "fl_mode": "full",
     },
     "image": {
-        "model_cls": ResNet18,
+        "model_cls": DenseNet121MultiLabel,
+        "num_classes": 3,
+        "class_names": ["Pneumonia", "COPD_Emphysema", "Fibrosis"],
         "default_port": 8081,
-        "default_pretrained": "pretrained_xray.pth",
+        "default_pretrained": "pretrained_xray_multilabel.pth",
         "min_samples": 300,
         "round_prefix": "image",
         "best_model_file": "best_global_image.pth",
         "display_name": "Image",
+        "fl_mode": "full",
+    },
+    "alignment": {
+        "model_cls": None,
+        "num_classes": 0,
+        "class_names": [],
+        "default_port": 8082,
+        "default_pretrained": None,
+        "min_samples": 100,
+        "round_prefix": "alignment",
+        "best_model_file": "best_global_prototypes.pth",
+        "display_name": "Prototype Alignment",
+        "fl_mode": "proto",
     },
 }
 
@@ -72,35 +90,38 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
 
             total_samples = 0
             total_loss = 0.0
-            total_acc = 0.0
-            acc_count = 0
+            total_auroc = 0.0
+            auroc_count = 0
             client_metrics = []
+            class_names = self.task_cfg.get("class_names", [])
             for client_proxy, fit_res in eligible_results:
                 client_id = getattr(client_proxy, "cid", "unknown")
                 loss_val = fit_res.metrics.get('loss', 0.0) if fit_res.metrics else 0.0
-                acc_val = fit_res.metrics.get('accuracy') if fit_res.metrics else None
+                auroc_val = fit_res.metrics.get('auroc_macro') if fit_res.metrics else None
+                per_class = fit_res.metrics.get('per_class_auroc', {}) if fit_res.metrics else {}
                 print(f"  ✅ Client {client_id}: {fit_res.num_examples} samples, Loss: {loss_val:.4f}", end="")
-                if acc_val is not None:
-                    print(f", Acc: {acc_val:.4f}")
+                if auroc_val is not None:
+                    print(f", AUROC macro: {auroc_val:.4f}")
                 else:
                     print()
                 total_samples += fit_res.num_examples
                 total_loss += loss_val * fit_res.num_examples
-                if acc_val is not None:
-                    total_acc += acc_val * fit_res.num_examples
-                    acc_count += fit_res.num_examples
+                if auroc_val is not None:
+                    total_auroc += auroc_val * fit_res.num_examples
+                    auroc_count += fit_res.num_examples
                 client_metrics.append({
                     "client_id": client_id,
                     "client_name": client_id,
                     "num_samples": fit_res.num_examples,
                     "loss": round(loss_val, 6),
-                    "accuracy": round(acc_val, 6) if acc_val is not None else None,
+                    "auroc_macro": round(auroc_val, 6) if auroc_val is not None else None,
+                    "per_class_auroc": {k: round(v, 6) for k, v in per_class.items()} if per_class else {},
                 })
             avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
-            avg_accuracy = total_acc / acc_count if acc_count > 0 else None
+            avg_auroc = total_auroc / auroc_count if auroc_count > 0 else None
             print(f"  📈 Total samples: {total_samples}, Avg Loss: {avg_loss:.4f}", end="")
-            if avg_accuracy is not None:
-                print(f", Avg Acc: {avg_accuracy:.4f}")
+            if avg_auroc is not None:
+                print(f", Avg AUROC: {avg_auroc:.4f}")
             else:
                 print()
 
@@ -133,7 +154,7 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
                 'num_skipped': len(skipped_clients),
                 'total_samples': total_samples,
                 'loss': round(avg_loss, 6),
-                'accuracy': round(avg_accuracy, 6) if avg_accuracy is not None else None,
+                'auroc_macro': round(avg_auroc, 6) if avg_auroc is not None else None,
                 'client_metrics': client_metrics,
             }
             print(f"EVENT:round_completed:{json.dumps(event_data)}")
@@ -144,13 +165,14 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flower Server")
-    parser.add_argument("--task", type=str, choices=["audio", "image"], default="audio")
+    parser.add_argument("--task", type=str, choices=["audio", "image", "alignment"], default="audio")
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--min-fit-clients", type=int, default=2)
     parser.add_argument("--min-available-clients", type=int, default=2)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--pretrained", type=str, default=None)
     parser.add_argument("--min-samples", type=int, default=None)
+    parser.add_argument("--fl-mode", type=str, choices=["full", "proto"], default=None)
     parser.add_argument("--config-path", type=str, default=None, help="Path to run_config.json from FastAPI")
     parser.add_argument("--job-id", type=str, default=None, help="Training job UUID")
     args = parser.parse_args()
@@ -172,35 +194,63 @@ if __name__ == "__main__":
         selected_min_samples = run_config.get("min_samples", selected_min_samples)
         pretrained_path = run_config.get("pretrained_path") or pretrained_path
 
-    print(f"EVENT:job_started:{json.dumps({'task': args.task, 'job_id': args.job_id or 'unknown', 'rounds': args.rounds, 'min_clients': args.min_fit_clients, 'min_samples': selected_min_samples, 'port': selected_port})}")
+    fl_mode = args.fl_mode if args.fl_mode is not None else cfg.get("fl_mode", "full")
+
+    print(f"EVENT:job_started:{json.dumps({'task': args.task, 'job_id': args.job_id or 'unknown', 'rounds': args.rounds, 'min_clients': args.min_fit_clients, 'min_samples': selected_min_samples, 'port': selected_port, 'fl_mode': fl_mode})}")
 
     print(f"\n{'='*70}")
-    print(f"🔧 INITIALIZING {cfg['display_name'].upper()} MODEL")
+    print(f"🔧 INITIALIZING {cfg['display_name'].upper()} MODEL (FL mode: {fl_mode})")
     print(f"{'='*70}")
-    print(f"Dang nap Pretrain {cfg['display_name']} lam trong so khoi diem...")
-    dummy_model = cfg["model_cls"]()
-    if os.path.exists(pretrained_path):
-        state_dict = torch.load(pretrained_path, map_location="cpu")
-        print(f"✅ File tim thay: {pretrained_path} ({len(state_dict)} layers)")
 
-        try:
-            dummy_model.load_state_dict(state_dict, strict=True)
-            print(f"✅ Da nap trong so thanh cong (100% khop mo hinh)!")
-            print(f"\n   Model info:")
-            print(f"   - Output: 1 neuron (Binary Classification)")
-            print(f"   - Loss: BCEWithLogitsLoss")
-            print(f"   - Inference: sigmoid(output) > 0.5")
-        except RuntimeError as e:
-            print(f"⚠️  Canh bao: {str(e)}")
-            print(f"   Fallback: Load voi strict=False")
-            dummy_model.load_state_dict(state_dict, strict=False)
+    if fl_mode == "proto":
+        image_ckpt = "pretrained_xray_multilabel.pth"
+        audio_ckpt = "pretrained_audio_multilabel.pth"
+        print(f"Dang nap Prototype FL Model...")
+        prototype_model = FLPrototypeModel(
+            image_pretrained_path=image_ckpt,
+            audio_pretrained_path=audio_ckpt,
+        )
+        if os.path.exists(image_ckpt):
+            print(f"✅ Loaded image checkpoint: {image_ckpt}")
+        if os.path.exists(audio_ckpt):
+            print(f"✅ Loaded audio checkpoint: {audio_ckpt}")
+        shareable = prototype_model.shareable_state_dict()
+        print(f"   Shareable params: {len(shareable)} tensors")
+        print(f"   - Disease prototypes: 3x256")
+        print(f"   - Acoustic prototypes: 2x256")
+        print(f"   - Projection heads: image(1024->256) + audio(768->256)")
+
+        initial_weights = [v.cpu().numpy() for v in shareable.values()]
+        initial_parameters = fl.common.ndarrays_to_parameters(initial_weights)
+        dummy_model = prototype_model
     else:
-        print(f"⚠️  Khong tim thay {pretrained_path}")
-        print(f"   Dung trong so khoi tao ngau nhien.")
-    print(f"{'='*70}\n")
+        print(f"Dang nap Pretrain {cfg['display_name']} lam trong so khoi diem...")
+        dummy_model = cfg["model_cls"]()
+        if os.path.exists(pretrained_path):
+            state_dict = torch.load(pretrained_path, map_location="cpu")
+            print(f"✅ File tim thay: {pretrained_path} ({len(state_dict)} layers)")
 
-    initial_weights = [val.cpu().numpy() for _, val in dummy_model.state_dict().items()]
-    initial_parameters = fl.common.ndarrays_to_parameters(initial_weights)
+            try:
+                dummy_model.load_state_dict(state_dict, strict=True)
+                print(f"✅ Da nap trong so thanh cong (100% khop mo hinh)!")
+                num_classes = cfg.get("num_classes", 1)
+                class_names = cfg.get("class_names", [])
+                print(f"\n   Model info:")
+                print(f"   - Output: {num_classes} logits (Multi-label: {', '.join(class_names)})")
+                print(f"   - Loss: BCEWithLogitsLoss")
+                print(f"   - Embedding dim: 256")
+            except RuntimeError as e:
+                print(f"⚠️  Canh bao: {str(e)}")
+                print(f"   Fallback: Load voi strict=False")
+                dummy_model.load_state_dict(state_dict, strict=False)
+        else:
+            print(f"⚠️  Khong tim thay {pretrained_path}")
+            print(f"   Dung trong so khoi tao ngau nhien.")
+
+        initial_weights = [val.cpu().numpy() for _, val in dummy_model.state_dict().items()]
+        initial_parameters = fl.common.ndarrays_to_parameters(initial_weights)
+
+    print(f"{'='*70}\n")
 
     strategy = SaveModelStrategy(
         task_key=args.task,

@@ -23,6 +23,7 @@ class TrainingJob(Base):
     flower_config: Mapped[dict] = mapped_column(JSONB, default=dict)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     current_round: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    joined_clients: Mapped[dict] = mapped_column(JSONB, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)

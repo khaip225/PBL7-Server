@@ -7,13 +7,14 @@ from shared.types import TaskType, ClientStatus
 class ClientCreate(BaseModel):
     client_name: str
     client_host: str
-    task_type: TaskType
+    task_type: TaskType | None = None
     hardware_info: dict = Field(default_factory=dict)
     dataset_info: dict = Field(default_factory=dict)
 
 
 class ClientUpdate(BaseModel):
     client_name: str | None = None
+    task_type: TaskType | None = None
     hardware_info: dict | None = None
     dataset_info: dict | None = None
 
@@ -21,13 +22,15 @@ class ClientUpdate(BaseModel):
 class ClientHeartbeat(BaseModel):
     latency_ms: float = 0.0
     hardware_info: dict | None = None
+    task_type: TaskType | None = None
+    dataset_info: dict | None = None
 
 
 class ClientResponse(BaseModel):
     id: UUID
     client_name: str
     client_host: str
-    task_type: TaskType
+    task_type: TaskType | None = None
     status: ClientStatus
     last_heartbeat: datetime | None = None
     hardware_info: dict

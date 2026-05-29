@@ -7,7 +7,7 @@ export interface Client {
   id: string;
   client_name: string;
   client_host: string;
-  task_type: TaskType;
+  task_type: TaskType | null;
   status: ClientStatus;
   last_heartbeat: string | null;
   hardware_info: Record<string, unknown>;
