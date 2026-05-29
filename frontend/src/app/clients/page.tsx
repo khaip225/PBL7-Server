@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Client } from "@/lib/types";
-import { Wifi, WifiOff, Cpu, HardDrive } from "lucide-react";
+import { Wifi, WifiOff } from "lucide-react";
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -67,17 +67,29 @@ export default function ClientsPage() {
                 <td className="p-4 text-gray-400 font-mono text-xs">{client.client_host}</td>
                 <td className="p-4">
                   <span className={`px-2 py-0.5 rounded text-xs ${
-                    client.task_type === "audio" ? "bg-purple-900/30 text-purple-400" : "bg-blue-900/30 text-blue-400"
+                    client.task_type === "audio" ? "bg-purple-900/30 text-purple-400"
+                    : client.task_type === "image" ? "bg-blue-900/30 text-blue-400"
+                    : "bg-gray-800 text-gray-400"
                   }`}>
-                    {client.task_type}
+                    {client.task_type ?? "đa năng"}
                   </span>
                 </td>
                 <td className="p-4 text-gray-400 text-xs">
-                  <div className="flex items-center gap-1"><Cpu size={12} /> {String(client.hardware_info?.gpu_name || "N/A")}</div>
-                  <div className="flex items-center gap-1 mt-0.5"><HardDrive size={12} /> {String(client.hardware_info?.ram_total_gb || "?")} GB RAM</div>
+                  <div>CPU: {client.hardware_info?.cpu_percent != null ? `${String(client.hardware_info.cpu_percent)}%` : "—"}</div>
+                  <div>RAM: {client.hardware_info?.ram_percent != null ? `${String(client.hardware_info.ram_percent)}%` : "—"}</div>
+                  <div>GPU: {client.hardware_info?.gpu_percent != null ? `${String(client.hardware_info.gpu_percent)}%` : "—"}</div>
+                  {client.hardware_info?.gpu_temp != null && (
+                    <div>GPU Temp: {String(client.hardware_info.gpu_temp)}°C</div>
+                  )}
                 </td>
                 <td className="p-4 text-gray-400 text-xs">
-                  {String(client.dataset_info?.total_samples ?? "?")} samples
+                  {client.dataset_info && Object.keys(client.dataset_info).length > 0 ? (
+                    <div className="space-y-0.5">
+                      <div>Audio: {client.dataset_info.audio_samples?.toLocaleString() ?? 0}</div>
+                      <div>Image: {client.dataset_info.image_samples?.toLocaleString() ?? 0}</div>
+                      <div className="text-gray-500">Total: {client.dataset_info.total_samples?.toLocaleString() ?? 0} samples</div>
+                    </div>
+                  ) : "—"}
                 </td>
                 <td className="p-4 text-gray-400">{client.latency_ms?.toFixed(0)} ms</td>
                 <td className="p-4 text-gray-500 text-xs">

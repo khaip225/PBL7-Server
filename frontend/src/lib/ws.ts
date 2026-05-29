@@ -9,7 +9,17 @@ class WSClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    this.url = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
+    if (typeof window !== "undefined") {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      // Dev: localhost → backend port 8000. Prod: cung host (qua Nginx proxy /ws)
+      if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+        this.url = `${proto}//${window.location.hostname}:8000/ws`;
+      } else {
+        this.url = `${proto}//${window.location.host}/ws`;
+      }
+    } else {
+      this.url = "ws://localhost:8000/ws";
+    }
     if (typeof window !== "undefined") {
       this.connect();
     }

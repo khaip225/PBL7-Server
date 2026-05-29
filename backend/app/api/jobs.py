@@ -1,4 +1,5 @@
 from uuid import UUID
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
@@ -6,6 +7,7 @@ from ..services.job_service import JobService
 from ..services.flower_manager import flower_manager
 from ..schemas.job import JobCreate, JobUpdate, JobResponse, JobListResponse
 from shared.types import JobStatus
+from shared.config import TASK_CONFIG
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -24,6 +26,61 @@ async def list_jobs(
         items=[JobResponse.model_validate(j) for j in items],
         total=total, page=page, limit=limit
     )
+
+
+@router.get("/available")
+async def list_available_jobs(db: AsyncSession = Depends(get_db)):
+    """Returns jobs that clients can join (Flower server is running)."""
+    svc = JobService(db)
+    jobs, _ = await svc.list_jobs(status=JobStatus.RUNNING.value, limit=50)
+    available = []
+    for j in jobs:
+        cfg = TASK_CONFIG.get(j.task_type.value, {})
+        available.append({
+            "job_id": str(j.id),
+            "name": j.name,
+            "task_type": j.task_type.value,
+            "num_rounds": j.num_rounds,
+            "min_clients": j.min_clients,
+            "joined_clients": list(j.joined_clients.keys()) if j.joined_clients else [],
+            "port": j.flower_config.get("port", cfg.get("default_port", 8080)),
+            "strategy": j.strategy.value,
+        })
+    return available
+
+
+@router.post("/{job_id}/join")
+async def join_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Client joins a training job. Returns connection info."""
+    svc = JobService(db)
+    from ..models.client import Client
+    from ..schemas.client import ClientCreate
+
+    job = await svc.get_job(UUID(job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != JobStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Job is not running")
+
+    joined = job.joined_clients or {}
+
+    # For now, accept any client. In future, validate via X-API-Key client identity.
+    import uuid as _uuid
+    client_key = str(_uuid.uuid4())[:8]  # temporary client key
+    joined[client_key] = datetime.now(timezone.utc).isoformat()
+    job.joined_clients = joined
+    await db.commit()
+
+    cfg = TASK_CONFIG.get(job.task_type.value, {})
+    port = job.flower_config.get("port", cfg.get("default_port", 8080))
+
+    return {
+        "job_id": str(job.id),
+        "task_type": job.task_type.value,
+        "num_rounds": job.num_rounds,
+        "server_address": f"20.249.212.81:{port}",
+        "port": port,
+    }
 
 
 @router.get("/{job_id}", response_model=JobResponse)

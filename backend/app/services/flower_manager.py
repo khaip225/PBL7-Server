@@ -72,6 +72,10 @@ class FlowerProcessManager:
         if pretrained:
             cmd.extend(["--pretrained", pretrained])
 
+        fl_mode = cfg.get("fl_mode")
+        if fl_mode:
+            cmd.extend(["--fl-mode", fl_mode])
+
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

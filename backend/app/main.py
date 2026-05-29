@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,9 +11,24 @@ from .websocket.events import WSEvent
 from .services.flower_manager import flower_manager, set_flower_manager_db_factory
 from .services.settings_service import SettingsService
 from .services.auth_service import seed_default_admin
+from .services.client_service import ClientService
 from shared.types import WSEventType
 
 settings = get_settings()
+
+
+async def _stale_client_monitor():
+    """Background task: mark clients OFFLINE if they miss heartbeat."""
+    while True:
+        try:
+            async with async_session() as db:
+                svc = ClientService(db)
+                stale = await svc.mark_stale_offline(settings.CLIENT_TIMEOUT_SECONDS)
+                if stale > 0:
+                    print(f"[StaleMonitor] Marked {stale} client(s) offline")
+        except Exception as e:
+            print(f"[StaleMonitor] Error: {e}")
+        await asyncio.sleep(30)
 
 
 @asynccontextmanager
@@ -33,9 +49,13 @@ async def lifespan(app: FastAPI):
     # Wire DB factory to flower manager
     set_flower_manager_db_factory(async_session)
 
+    # Start stale client monitor
+    monitor_task = asyncio.create_task(_stale_client_monitor())
+
     yield
 
-    # Shutdown: stop all Flower processes
+    # Shutdown: stop all Flower processes + monitor
+    monitor_task.cancel()
     await flower_manager.shutdown_all()
     await engine.dispose()
 
