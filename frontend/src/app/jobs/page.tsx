@@ -72,7 +72,9 @@ export default function JobsPage() {
               <div>
                 <h3 className="font-semibold">{job.name}</h3>
                 <span className={`inline-block mt-1 px-2 py-0.5 rounded text-xs ${
-                  job.task_type === "audio" ? "bg-purple-900/30 text-purple-400" : "bg-blue-900/30 text-blue-400"
+                  job.task_type === "audio" ? "bg-purple-900/30 text-purple-400"
+                  : job.task_type === "image" ? "bg-blue-900/30 text-blue-400"
+                  : "bg-emerald-900/30 text-emerald-400"
                 }`}>{job.task_type}</span>
               </div>
               <span className={statusBadge(job.status)}>{job.status}</span>
@@ -115,9 +117,10 @@ export default function JobsPage() {
 
 function CreateJobForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState("");
-  const [taskType, setTaskType] = useState<"audio" | "image">("image");
+  const [taskType, setTaskType] = useState<"audio" | "image" | "alignment">("image");
   const [numRounds, setNumRounds] = useState(10);
   const [minClients, setMinClients] = useState(2);
+  const [minSamples, setMinSamples] = useState(100);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -130,8 +133,8 @@ function CreateJobForm({ onDone, onCancel }: { onDone: () => void; onCancel: () 
         strategy: "fedavg",
         num_rounds: numRounds,
         min_clients: minClients,
-        min_samples: 300,
-        model_config: { lr: 1e-4, batch_size: 16, local_epochs: 2, mu: 0.001 },
+        min_samples: minSamples,
+        model_config: { lr: 5e-6, batch_size: 16, local_epochs: 1, mu: 0.01 },
       });
       onDone();
     } catch (e: any) {
@@ -152,8 +155,9 @@ function CreateJobForm({ onDone, onCancel }: { onDone: () => void; onCancel: () 
           <div>
             <label className="block text-sm text-gray-400 mb-1">Task Type</label>
             <select value={taskType} onChange={(e) => setTaskType(e.target.value as any)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm">
-              <option value="image">Image (X-ray)</option>
-              <option value="audio">Audio (Lung Sound)</option>
+              <option value="image">Image Prototype FL (X-ray)</option>
+              <option value="audio">Audio Prototype FL (Lung Sound)</option>
+              <option value="alignment">Prototype Alignment (Multimodal)</option>
             </select>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -165,6 +169,10 @@ function CreateJobForm({ onDone, onCancel }: { onDone: () => void; onCancel: () 
               <label className="block text-sm text-gray-400 mb-1">Min Clients</label>
               <input type="number" value={minClients} onChange={(e) => setMinClients(Number(e.target.value))} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" min={1} />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Min Samples per Client</label>
+            <input type="number" value={minSamples} onChange={(e) => setMinSamples(Number(e.target.value))} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" min={1} />
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>

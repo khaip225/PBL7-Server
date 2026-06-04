@@ -22,7 +22,10 @@ RUN pip install --no-cache-dir \
     flwr \
     python-jose[cryptography] \
     "passlib[bcrypt]" \
-    "bcrypt<4.1"
+    "bcrypt<4.1" \
+    transformers \
+    scikit-learn \
+    soundfile
 
 # Install CPU-only PyTorch (smaller, no CUDA)
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \

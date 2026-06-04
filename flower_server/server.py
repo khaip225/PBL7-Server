@@ -1,237 +1,466 @@
-import flwr as fl
+"""Prototype-Guided Federated Learning Server — Flower Integration.
+
+Implements Selective FedAvg:
+  - image projection params:  aggregated from image + multimodal clients only
+  - audio projection params:  aggregated from audio + multimodal clients only
+  - prototypes:               aggregated from ALL clients
+
+Supports 3 task types:
+  - image:       DenseNet121Encoder-based FL (prototype-only sharing)
+  - audio:       ASTEncoder-based FL (prototype-only sharing)
+  - alignment:   Full prototype alignment FL (both modalities)
+
+Design matched to notebook pbl7-fl.ipynb (fedavg_selective).
+"""
+
+from __future__ import annotations
+
 import argparse
-import os
 import json
-import torch
+import os
+import sys
+import time
 from collections import OrderedDict
-from densenet121_model import DenseNet121MultiLabel
-from ast_model import ASTMultiLabel
-from prototype_fl_model import FLPrototypeModel
+from typing import Any
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+import flwr as fl
+
+# Path setup for shared modules
+_server_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _server_root not in sys.path:
+    sys.path.insert(0, _server_root)
+
+_client_path = os.path.join(_server_root, "..", "PBL7-Client")
+if os.path.exists(_client_path) and _client_path not in sys.path:
+    sys.path.insert(0, _client_path)
+
+# Import shared components from Client (single source of truth)
+from shared.encoder_models import DenseNet121Encoder, ASTEncoder
+from shared.momentum_prototype import MomentumPrototypeModule
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Task Configuration
+# ═══════════════════════════════════════════════════════════════════════════
 
 TASK_CONFIG = {
     "audio": {
-        "model_cls": ASTMultiLabel,
-        "num_classes": 2,
-        "class_names": ["Crackle", "Wheeze"],
+        "display_name": "Audio Prototype FL",
         "default_port": 8080,
-        "default_pretrained": "pretrained_audio_multilabel.pth",
-        "min_samples": 300,
-        "round_prefix": "audio",
-        "best_model_file": "best_global_audio.pth",
-        "display_name": "Audio",
-        "fl_mode": "full",
+        "num_classes": 3,       # normal, crackle, wheeze
+        "class_names": ["normal", "crackle", "wheeze"],
+        "min_samples": 100,
+        "round_prefix": "audio_proto",
+        "best_model_file": "best_global_audio_proto.pth",
+        "fl_mode": "proto",
     },
     "image": {
-        "model_cls": DenseNet121MultiLabel,
-        "num_classes": 3,
-        "class_names": ["Pneumonia", "COPD_Emphysema", "Fibrosis"],
+        "display_name": "Image Prototype FL",
         "default_port": 8081,
-        "default_pretrained": "pretrained_xray_multilabel.pth",
-        "min_samples": 300,
-        "round_prefix": "image",
-        "best_model_file": "best_global_image.pth",
-        "display_name": "Image",
-        "fl_mode": "full",
+        "num_classes": 4,       # Normal, Pneumonia, COPD, Fibrosis
+        "class_names": ["Normal", "Pneumonia", "COPD_Emphysema", "Fibrosis"],
+        "min_samples": 100,
+        "round_prefix": "image_proto",
+        "best_model_file": "best_global_image_proto.pth",
+        "fl_mode": "proto",
     },
     "alignment": {
-        "model_cls": None,
+        "display_name": "Prototype Alignment FL",
+        "default_port": 8082,
         "num_classes": 0,
         "class_names": [],
-        "default_port": 8082,
-        "default_pretrained": None,
-        "min_samples": 100,
-        "round_prefix": "alignment",
+        "min_samples": 50,
+        "round_prefix": "alignment_proto",
         "best_model_file": "best_global_prototypes.pth",
-        "display_name": "Prototype Alignment",
         "fl_mode": "proto",
     },
 }
 
 
-class SaveModelStrategy(fl.server.strategy.FedAvg):
-    def __init__(self, task_key, min_samples, job_id=None, *args, **kwargs):
+# ═══════════════════════════════════════════════════════════════════════════
+# FedAvg Selective — core aggregation logic
+# ═══════════════════════════════════════════════════════════════════════════
+
+def fedavg_selective(
+    client_states: list[OrderedDict],
+    client_weights: list[float],
+    client_modalities: list[str],
+) -> OrderedDict:
+    """Selective FedAvg aggregation.
+
+    - img_proj.*   → only from image + multimodal clients
+    - aud_proj.*   → only from audio + multimodal clients
+    - proto.*      → from ALL clients
+    """
+    weights_sqrt = [w ** 0.5 for w in client_weights]
+    global_state = OrderedDict()
+
+    if not client_states:
+        return global_state
+
+    first_keys = list(client_states[0].keys())
+
+    # --- Image projection (image + multimodal) ---
+    img_pairs = [
+        (s, w) for s, w, m in zip(client_states, weights_sqrt, client_modalities)
+        if m in ("image", "multimodal")
+    ]
+    img_total = sum(w for _, w in img_pairs) or 1.0
+    for k in [k for k in first_keys if k.startswith("img_proj.")]:
+        global_state[k] = sum(s[k].float() * w for s, w in img_pairs) / img_total
+
+    # --- Audio projection (audio + multimodal) ---
+    aud_pairs = [
+        (s, w) for s, w, m in zip(client_states, weights_sqrt, client_modalities)
+        if m in ("audio", "multimodal")
+    ]
+    aud_total = sum(w for _, w in aud_pairs) or 1.0
+    for k in [k for k in first_keys if k.startswith("aud_proj.")]:
+        global_state[k] = sum(s[k].float() * w for s, w in aud_pairs) / aud_total
+
+    # --- Prototypes (all clients) ---
+    total_w = sum(weights_sqrt) or 1.0
+    for k in [k for k in first_keys if k.startswith("proto.")]:
+        global_state[k] = sum(
+            s[k].float() * w for s, w in zip(client_states, weights_sqrt)
+        ) / total_w
+
+    return global_state
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Custom Flower Strategy
+# ═══════════════════════════════════════════════════════════════════════════
+
+class SelectiveAggregationStrategy(fl.server.strategy.FedAvg):
+    """Custom FedAvg strategy with:
+    - Selective aggregation by modality (fedavg_selective)
+    - Per-round metrics logging with prototype structure tracking
+    - Checkpoint saving
+    - EVENT emission for LogParser / WebSocket
+    """
+
+    def __init__(
+        self,
+        task_key: str,
+        min_samples: int,
+        job_id: str | None = None,
+        save_dir: str = "aggregated_models",
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.task_key = task_key
         self.task_cfg = TASK_CONFIG[task_key]
         self.min_samples = min_samples
         self.job_id = job_id
+        self.save_dir = save_dir
 
-    def aggregate_fit(self, server_round, results, failures):
-        eligible_results = []
-        skipped_clients = []
-        for client_proxy, fit_res in results:
+        os.makedirs(save_dir, exist_ok=True)
+
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: list[tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
+        failures: list[BaseException],
+    ) -> tuple[fl.common.Parameters | None, dict]:
+        """Run selective FedAvg aggregation for one round."""
+        # --- Filter by min_samples ---
+        eligible = []
+        skipped = []
+        for cp, fit_res in results:
             if fit_res.num_examples >= self.min_samples:
-                eligible_results.append((client_proxy, fit_res))
+                eligible.append((cp, fit_res))
             else:
-                client_id = getattr(client_proxy, "cid", "unknown")
-                skipped_clients.append((client_id, fit_res.num_examples))
+                cid = getattr(cp, "cid", "unknown")
+                skipped.append((cid, fit_res.num_examples))
 
-        if skipped_clients:
-            skipped_info = ", ".join(
-                [f"{client_id}:{num_examples}" for client_id, num_examples in skipped_clients]
-            )
-            print(
-                f"[{self.task_cfg['display_name']}] Round {server_round}: bo {len(skipped_clients)} client duoi nguong {self.min_samples} mau -> {skipped_info}"
-            )
+        if skipped:
+            info = ", ".join(f"{c}:{n}" for c, n in skipped)
+            print(f"[{self.task_cfg['display_name']}] Round {server_round}: "
+                  f"SKIP {len(skipped)} clients below {self.min_samples} samples → {info}")
 
-        if len(eligible_results) < self.min_fit_clients:
-            print(
-                f"[{self.task_cfg['display_name']}] Round {server_round}: chi co {len(eligible_results)} client hop le (< min_fit_clients={self.min_fit_clients}), bo qua aggregate."
-            )
+        if len(eligible) < self.min_fit_clients:
+            print(f"[{self.task_cfg['display_name']}] Round {server_round}: "
+                  f"only {len(eligible)} eligible (< {self.min_fit_clients}), skip aggregation.")
             return None, {}
 
-        print(f"\n[{self.task_cfg['display_name']}] Round {server_round}: Tong hop {len(eligible_results)} client...")
-        aggregated_weights, aggregated_metrics = super().aggregate_fit(server_round, eligible_results, failures)
+        # --- Extract modality info from each client ---
+        client_modalities: list[str] = []
+        for cp, fit_res in eligible:
+            cid = getattr(cp, "cid", "unknown")
+            modality = fit_res.metrics.get("modality", "image") if fit_res.metrics else "image"
+            client_modalities.append(modality)
 
-        if aggregated_weights is not None:
-            print(f"\n{'='*70}")
-            print(f"📊 AGGREGATION REPORT - Round {server_round}")
-            print(f"{'='*70}")
+        # --- Convert results to OrderedDicts ---
+        client_states = []
+        client_weights: list[float] = []
+        total_client_m = 0.0
+        total_client_loss = 0.0
 
-            total_samples = 0
-            total_loss = 0.0
-            total_auroc = 0.0
-            total_auprc = 0.0
-            total_f1 = 0.0
-            total_precision = 0.0
-            total_recall = 0.0
-            metric_count = 0  # count of clients with valid auroc
-            client_metrics = []
-            class_names = self.task_cfg.get("class_names", [])
-            # Aggregate per-class metrics weighted by samples
-            aggregated_per_class_auroc = {}
-            aggregated_per_class_auprc = {}
-            for client_proxy, fit_res in eligible_results:
-                client_id = getattr(client_proxy, "cid", "unknown")
-                loss_val = fit_res.metrics.get('loss', 0.0) if fit_res.metrics else 0.0
-                auroc_val = fit_res.metrics.get('auroc_macro') if fit_res.metrics else None
-                auprc_val = fit_res.metrics.get('auprc_macro') if fit_res.metrics else None
-                f1_val = fit_res.metrics.get('f1_macro') if fit_res.metrics else None
-                prec_val = fit_res.metrics.get('precision_macro') if fit_res.metrics else None
-                rec_val = fit_res.metrics.get('recall_macro') if fit_res.metrics else None
-                per_class_auroc = fit_res.metrics.get('per_class_auroc', {}) if fit_res.metrics else {}
-                per_class_auprc = fit_res.metrics.get('per_class_auprc', {}) if fit_res.metrics else {}
-                print(f"  ✅ Client {client_id}: {fit_res.num_examples} samples, Loss: {loss_val:.4f}", end="")
-                if auroc_val is not None:
-                    print(f", AUROC: {auroc_val:.4f}", end="")
-                if f1_val is not None:
-                    print(f", F1: {f1_val:.4f}", end="")
-                print()
-                total_samples += fit_res.num_examples
-                total_loss += loss_val * fit_res.num_examples
-                if auroc_val is not None:
-                    total_auroc += auroc_val * fit_res.num_examples
-                if auprc_val is not None:
-                    total_auprc += auprc_val * fit_res.num_examples
-                if f1_val is not None:
-                    total_f1 += f1_val * fit_res.num_examples
-                if prec_val is not None:
-                    total_precision += prec_val * fit_res.num_examples
-                if rec_val is not None:
-                    total_recall += rec_val * fit_res.num_examples
-                if auroc_val is not None:
-                    metric_count += fit_res.num_examples
-                # Aggregate per-class AUROC
-                for k, v in per_class_auroc.items():
-                    if k not in aggregated_per_class_auroc:
-                        aggregated_per_class_auroc[k] = {"sum": 0.0, "count": 0}
-                    aggregated_per_class_auroc[k]["sum"] += v * fit_res.num_examples
-                    aggregated_per_class_auroc[k]["count"] += fit_res.num_examples
-                # Aggregate per-class AUPRC
-                for k, v in per_class_auprc.items():
-                    if k not in aggregated_per_class_auprc:
-                        aggregated_per_class_auprc[k] = {"sum": 0.0, "count": 0}
-                    aggregated_per_class_auprc[k]["sum"] += v * fit_res.num_examples
-                    aggregated_per_class_auprc[k]["count"] += fit_res.num_examples
-                client_metrics.append({
-                    "client_id": client_id,
-                    "client_name": client_id,
-                    "num_samples": fit_res.num_examples,
-                    "loss": round(loss_val, 6),
-                    "auroc_macro": round(auroc_val, 6) if auroc_val is not None else None,
-                    "auprc_macro": round(auprc_val, 6) if auprc_val is not None else None,
-                    "f1_macro": round(f1_val, 6) if f1_val is not None else None,
-                    "precision_macro": round(prec_val, 6) if prec_val is not None else None,
-                    "recall_macro": round(rec_val, 6) if rec_val is not None else None,
-                    "per_class_auroc": {k: round(v, 6) for k, v in per_class_auroc.items()} if per_class_auroc else {},
-                    "per_class_auprc": {k: round(v, 6) for k, v in per_class_auprc.items()} if per_class_auprc else {},
-                })
-            avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
-            avg_auroc = total_auroc / metric_count if metric_count > 0 else None
-            avg_auprc = total_auprc / metric_count if metric_count > 0 else None
-            avg_f1 = total_f1 / metric_count if metric_count > 0 else None
-            avg_precision = total_precision / metric_count if metric_count > 0 else None
-            avg_recall = total_recall / metric_count if metric_count > 0 else None
-            # Final per-class aggregates
-            final_per_class_auroc = {}
-            for k, v in aggregated_per_class_auroc.items():
-                final_per_class_auroc[k] = round(v["sum"] / v["count"], 6) if v["count"] > 0 else 0.0
-            final_per_class_auprc = {}
-            for k, v in aggregated_per_class_auprc.items():
-                final_per_class_auprc[k] = round(v["sum"] / v["count"], 6) if v["count"] > 0 else 0.0
-            print(f"  📈 Total samples: {total_samples}, Avg Loss: {avg_loss:.4f}", end="")
-            if avg_auroc is not None:
-                print(f", Avg AUROC: {avg_auroc:.4f}", end="")
-            if avg_f1 is not None:
-                print(f", Avg F1: {avg_f1:.4f}", end="")
-            print()
+        print(f"\n{'='*70}")
+        print(f"📊 AGGREGATION — Round {server_round}")
+        print(f"{'='*70}")
 
-            ndarrays = fl.common.parameters_to_ndarrays(aggregated_weights)
-            dummy_model = self.task_cfg["model_cls"]()
-            params_dict = zip(dummy_model.state_dict().keys(), ndarrays)
-            state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+        for i, (cp, fit_res) in enumerate(eligible):
+            cid = getattr(cp, "cid", f"client_{i}")
+            ndarrays = fl.common.parameters_to_ndarrays(fit_res.parameters)
 
-            dummy_model.load_state_dict(state_dict, strict=True)
+            # Reconstruct OrderedDict from server's dummy model keys
+            keys = list(self._dummy_state_keys)
+            state = OrderedDict()
+            for k, arr in zip(keys, ndarrays):
+                state[k] = torch.tensor(arr)
 
-            print(f"\n📋 MODEL WEIGHTS VERIFICATION:")
-            for name, param in list(dummy_model.state_dict().items())[:3]:
-                print(f"  {name}: shape={param.shape}, dtype={param.dtype}")
-            print(f"  ... (total {len(dummy_model.state_dict())} layers)")
+            client_states.append(state)
+            client_weights.append(float(fit_res.num_examples))
 
-            os.makedirs("aggregated_models", exist_ok=True)
-            save_path = f"aggregated_models/{self.task_cfg['round_prefix']}_round_{server_round}.pth"
-            torch.save(dummy_model.state_dict(), save_path)
-            print(f"\n💾 Da luu model: {save_path}")
+            loss_val = fit_res.metrics.get("loss", 0.0) if fit_res.metrics else 0.0
+            mod = fit_res.metrics.get("modality", "?") if fit_res.metrics else "?"
+            print(f"  ✅ {cid} ({mod}): {fit_res.num_examples} samples, loss={loss_val:.4f}")
 
-            torch.save(dummy_model.state_dict(), self.task_cfg["best_model_file"])
-            print(f"✅ Da cap nhat: {self.task_cfg['best_model_file']}")
-            print(f"{'='*70}\n")
+            total_client_m += float(fit_res.num_examples)
+            total_client_loss += loss_val * float(fit_res.num_examples)
 
-            # Emit structured events for LogParser — includes all metrics + per-client details
-            event_data = {
-                'task': self.task_key,
-                'round': server_round,
-                'num_clients': len(eligible_results),
-                'num_skipped': len(skipped_clients),
-                'total_samples': total_samples,
-                'loss': round(avg_loss, 6),
-                'auroc_macro': round(avg_auroc, 6) if avg_auroc is not None else None,
-                'auprc_macro': round(avg_auprc, 6) if avg_auprc is not None else None,
-                'f1_macro': round(avg_f1, 6) if avg_f1 is not None else None,
-                'precision_macro': round(avg_precision, 6) if avg_precision is not None else None,
-                'recall_macro': round(avg_recall, 6) if avg_recall is not None else None,
-                'per_class_auroc': final_per_class_auroc,
-                'per_class_auprc': final_per_class_auprc,
-                'client_metrics': client_metrics,
+        if not client_states:
+            return None, {}
+
+        # --- Run selective FedAvg ---
+        aggregated_state = fedavg_selective(client_states, client_weights, client_modalities)
+
+        avg_loss = total_client_loss / total_client_m if total_client_m > 0 else 0.0
+
+        # Count aggregated tensors by type
+        n_img = sum(1 for k in aggregated_state if k.startswith("img_proj."))
+        n_aud = sum(1 for k in aggregated_state if k.startswith("aud_proj."))
+        n_proto = sum(1 for k in aggregated_state if k.startswith("proto."))
+        print(f"  📦 Aggregated: {n_img} img_proj + {n_aud} aud_proj + {n_proto} proto = {len(aggregated_state)} tensors")
+        print(f"  📈 Avg loss: {avg_loss:.4f}")
+
+        # --- Compute prototype structure metrics ---
+        proto_metrics = self._compute_proto_metrics(aggregated_state)
+        if proto_metrics:
+            print(f"  🎯 Prototype structure: {json.dumps(proto_metrics)}")
+
+        # --- Save checkpoint ---
+        save_path = os.path.join(
+            self.save_dir,
+            f"{self.task_cfg['round_prefix']}_round_{server_round}.pth",
+        )
+        torch.save({k: v for k, v in aggregated_state.items()}, save_path)
+
+        # Also save as best
+        best_path = self.task_cfg["best_model_file"]
+        torch.save({k: v for k, v in aggregated_state.items()}, best_path)
+
+        print(f"  💾 Saved: {save_path}")
+        print(f"  ✅ Best: {best_path}")
+        print(f"{'='*70}\n")
+
+        # --- Convert back to Flower Parameters ---
+        agg_ndarrays = [aggregated_state[k].numpy() for k in aggregated_state]
+        agg_params = fl.common.ndarrays_to_parameters(agg_ndarrays)
+
+        # --- Emit event for LogParser ---
+        event = {
+            "task": self.task_key,
+            "round": server_round,
+            "num_clients": len(eligible),
+            "num_skipped": len(skipped),
+            "total_samples": int(total_client_m),
+            "loss": round(avg_loss, 6),
+            "proto_metrics": proto_metrics,
+            "n_img_proj": n_img,
+            "n_aud_proj": n_aud,
+            "n_proto": n_proto,
+            "client_modalities": client_modalities,
+        }
+        print(f"EVENT:round_completed:{json.dumps(event)}")
+        print(f"EVENT:checkpoint_saved:{json.dumps({'task': self.task_key, 'round': server_round, 'path': save_path})}")
+
+        # --- Build metrics dict ---
+        metrics = {
+            "loss": round(avg_loss, 6),
+            "num_clients": len(eligible),
+            "proto_metrics": proto_metrics or {},
+        }
+
+        return agg_params, metrics
+
+    # ------------------------------------------------------------------
+    # Dummy model for key tracking
+    # ------------------------------------------------------------------
+    @property
+    def _dummy_state_keys(self) -> list[str]:
+        if not hasattr(self, "__dummy_keys_cache"):
+            # Build dummy encoder to get state keys
+            dummy_img = DenseNet121Encoder(embedding_dim=256)
+            dummy_aud = ASTEncoder(embedding_dim=256)
+            dummy_proto = MomentumPrototypeModule(dim=256)
+
+            keys = []
+            for k in dummy_img.projection.state_dict():
+                keys.append(f"img_proj.{k}")
+            for k in dummy_aud.projection.state_dict():
+                keys.append(f"aud_proj.{k}")
+            for k, _ in dummy_proto.named_parameters():
+                keys.append(f"proto.{k}")
+
+            self.__dummy_keys_cache = keys
+        return self.__dummy_keys_cache
+
+    # ------------------------------------------------------------------
+    # Prototype structure analysis
+    # ------------------------------------------------------------------
+    def _compute_proto_metrics(self, state: OrderedDict) -> dict | None:
+        """Compute prototype similarity metrics from aggregated state."""
+        try:
+            # Extract prototype tensors
+            proto_names = [
+                "p_normal_img", "p_normal_aud",
+                "p_pneumonia", "p_copd", "p_fibrosis",
+                "p_crackle", "p_wheeze",
+            ]
+            protos: dict[str, torch.Tensor] = {}
+            for name in proto_names:
+                key = f"proto.{name}"
+                if key in state:
+                    protos[name] = state[key].float()
+
+            if len(protos) < 7:
+                return None
+
+            # Key similarity pairs
+            pairs = {
+                "crackle_pneumonia":    ("p_crackle",    "p_pneumonia"),
+                "crackle_fibrosis":     ("p_crackle",    "p_fibrosis"),
+                "wheeze_copd":          ("p_wheeze",     "p_copd"),
+                "pneumonia_fibrosis":   ("p_pneumonia",  "p_fibrosis"),
+                "crackle_wheeze":       ("p_crackle",    "p_wheeze"),
+                "normal_img_aud":       ("p_normal_img", "p_normal_aud"),
             }
-            print(f"EVENT:round_completed:{json.dumps(event_data)}")
-            print(f"EVENT:checkpoint_saved:{json.dumps({'task': self.task_key, 'round': server_round, 'path': save_path})}")
 
-        return aggregated_weights, aggregated_metrics
+            result = {}
+            for label, (n1, n2) in pairs.items():
+                if n1 in protos and n2 in protos:
+                    sim = float(F.cosine_similarity(
+                        protos[n1].unsqueeze(0), protos[n2].unsqueeze(0)
+                    ))
+                    result[label] = round(sim, 4)
 
+            # Prototype norms
+            norms = {n.replace("p_", "norm_"): round(float(protos[n].norm()), 4)
+                     for n in proto_names if n in protos}
+            result.update(norms)
+
+            return result
+        except Exception as e:
+            print(f"  ⚠️  Proto metrics error: {e}")
+            return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Dummy model builder for initial parameters
+# ═══════════════════════════════════════════════════════════════════════════
+
+def build_initial_parameters(task_key: str, pretrained_path: str | None = None) -> fl.common.Parameters:
+    """Build initial parameters (prototypes + projection heads) as Flower Parameters.
+
+    Loads pretrained weights if available, otherwise random init.
+    """
+    embed_dim = 256
+
+    img_enc = DenseNet121Encoder(embedding_dim=embed_dim, dropout=0.2)
+    aud_enc = ASTEncoder(embedding_dim=embed_dim, dropout=0.2)
+    proto   = MomentumPrototypeModule(dim=embed_dim, momentum=0.99)
+
+    # Try loading pretrained
+    if pretrained_path and os.path.exists(pretrained_path):
+        print(f"  📥 Loading pretrained from: {pretrained_path}")
+        try:
+            checkpoint = torch.load(pretrained_path, map_location="cpu")
+
+            # Check what format the checkpoint is
+            if "image_encoder" in checkpoint:
+                # Notebook format: stage3/stage4 checkpoint
+                img_enc.load_state_dict(checkpoint["image_encoder"], strict=False)
+                aud_enc.load_state_dict(checkpoint["audio_encoder"], strict=False)
+                proto.load_state_dict(checkpoint["prototype_module"], strict=False)
+                print(f"  ✅ Loaded notebook checkpoint (round {checkpoint.get('round', '?')})")
+            elif "img_proj.0.weight" in checkpoint:
+                # Aggregated state dict format
+                for k, v in checkpoint.items():
+                    if k.startswith("img_proj."):
+                        sub_key = k.replace("img_proj.", "")
+                        if sub_key in img_enc.projection.state_dict():
+                            img_enc.projection.state_dict()[sub_key].copy_(v)
+                    elif k.startswith("aud_proj."):
+                        sub_key = k.replace("aud_proj.", "")
+                        if sub_key in aud_enc.projection.state_dict():
+                            aud_enc.projection.state_dict()[sub_key].copy_(v)
+                    elif k.startswith("proto."):
+                        sub_key = k.replace("proto.", "")
+                        if hasattr(proto, sub_key):
+                            getattr(proto, sub_key).data.copy_(v)
+                print("  ✅ Loaded aggregated state dict checkpoint")
+            else:
+                img_enc.load_state_dict(checkpoint, strict=False)
+                print("  ✅ Loaded checkpoint (partial match)")
+        except Exception as e:
+            print(f"  ⚠️  Failed to load pretrained: {e}")
+            print("  → Using random initialization")
+    else:
+        print("  → No pretrained found, using random initialization")
+
+    # Build initial state
+    state = OrderedDict()
+    for k, v in img_enc.projection.state_dict().items():
+        state[f"img_proj.{k}"] = v
+    for k, v in aud_enc.projection.state_dict().items():
+        state[f"aud_proj.{k}"] = v
+    for k, v in proto.named_parameters():
+        state[f"proto.{k}"] = v.data
+
+    ndarrays = [val.cpu().numpy() for val in state.values()]
+    params = fl.common.ndarrays_to_parameters(ndarrays)
+
+    print(f"  📦 Initial parameters: {len(ndarrays)} tensors")
+    total_size = sum(arr.nbytes for arr in ndarrays)
+    print(f"  📏 Total size: {total_size / 1024:.1f} KB (~3MB typical for full weights)")
+
+    return params, state.keys()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Flower Server")
-    parser.add_argument("--task", type=str, choices=["audio", "image", "alignment"], default="audio")
-    parser.add_argument("--rounds", type=int, default=5)
-    parser.add_argument("--min-fit-clients", type=int, default=2)
-    parser.add_argument("--min-available-clients", type=int, default=2)
-    parser.add_argument("--port", type=int, default=None)
-    parser.add_argument("--pretrained", type=str, default=None)
-    parser.add_argument("--min-samples", type=int, default=None)
-    parser.add_argument("--fl-mode", type=str, choices=["full", "proto"], default=None)
-    parser.add_argument("--config-path", type=str, default=None, help="Path to run_config.json from FastAPI")
-    parser.add_argument("--job-id", type=str, default=None, help="Training job UUID")
+    parser = argparse.ArgumentParser(description="Prototype-Guided FL Server (Flower)")
+    parser.add_argument("--task", type=str, default="image",
+                        choices=["audio", "image", "alignment"],
+                        help="Task type")
+    parser.add_argument("--rounds", type=int, default=10,
+                        help="Number of FL rounds")
+    parser.add_argument("--min-fit-clients", type=int, default=1,
+                        help="Minimum clients for aggregation")
+    parser.add_argument("--min-available-clients", type=int, default=1,
+                        help="Minimum available clients")
+    parser.add_argument("--port", type=int, default=None,
+                        help="Override default port")
+    parser.add_argument("--pretrained", type=str, default=None,
+                        help="Path to pretrained checkpoint")
+    parser.add_argument("--min-samples", type=int, default=None,
+                        help="Override minimum samples threshold")
+    parser.add_argument("--config-path", type=str, default=None,
+                        help="Path to run_config.json from FastAPI")
+    parser.add_argument("--job-id", type=str, default=None,
+                        help="Training job UUID")
     args = parser.parse_args()
 
     # Load runtime config from FastAPI if provided
@@ -242,92 +471,52 @@ if __name__ == "__main__":
         args.job_id = args.job_id or run_config.get("job_id")
 
     cfg = TASK_CONFIG[args.task]
-    selected_port = args.port if args.port is not None else cfg["default_port"]
-    pretrained_path = args.pretrained if args.pretrained is not None else cfg["default_pretrained"]
-    selected_min_samples = args.min_samples if args.min_samples is not None else cfg["min_samples"]
+    port = args.port if args.port is not None else cfg["default_port"]
+    min_samples = args.min_samples if args.min_samples is not None else cfg["min_samples"]
 
-    # Override from run_config if present
     if run_config:
-        selected_min_samples = run_config.get("min_samples", selected_min_samples)
-        pretrained_path = run_config.get("pretrained_path") or pretrained_path
-
-    fl_mode = args.fl_mode if args.fl_mode is not None else cfg.get("fl_mode", "full")
-
-    print(f"EVENT:job_started:{json.dumps({'task': args.task, 'job_id': args.job_id or 'unknown', 'rounds': args.rounds, 'min_clients': args.min_fit_clients, 'min_samples': selected_min_samples, 'port': selected_port, 'fl_mode': fl_mode})}")
+        min_samples = run_config.get("min_samples", min_samples)
 
     print(f"\n{'='*70}")
-    print(f"🔧 INITIALIZING {cfg['display_name'].upper()} MODEL (FL mode: {fl_mode})")
+    print(f"🔧 PROTOTYPE-GUIDED FL SERVER — {cfg['display_name']}")
     print(f"{'='*70}")
-
-    if fl_mode == "proto":
-        image_ckpt = "pretrained_xray_multilabel.pth"
-        audio_ckpt = "pretrained_audio_multilabel.pth"
-        print(f"Dang nap Prototype FL Model...")
-        prototype_model = FLPrototypeModel(
-            image_pretrained_path=image_ckpt,
-            audio_pretrained_path=audio_ckpt,
-        )
-        if os.path.exists(image_ckpt):
-            print(f"✅ Loaded image checkpoint: {image_ckpt}")
-        if os.path.exists(audio_ckpt):
-            print(f"✅ Loaded audio checkpoint: {audio_ckpt}")
-        shareable = prototype_model.shareable_state_dict()
-        print(f"   Shareable params: {len(shareable)} tensors")
-        print(f"   - Disease prototypes: 3x256")
-        print(f"   - Acoustic prototypes: 2x256")
-        print(f"   - Projection heads: image(1024->256) + audio(768->256)")
-
-        initial_weights = [v.cpu().numpy() for v in shareable.values()]
-        initial_parameters = fl.common.ndarrays_to_parameters(initial_weights)
-        dummy_model = prototype_model
-    else:
-        print(f"Dang nap Pretrain {cfg['display_name']} lam trong so khoi diem...")
-        dummy_model = cfg["model_cls"]()
-        if os.path.exists(pretrained_path):
-            state_dict = torch.load(pretrained_path, map_location="cpu")
-            print(f"✅ File tim thay: {pretrained_path} ({len(state_dict)} layers)")
-
-            try:
-                dummy_model.load_state_dict(state_dict, strict=True)
-                print(f"✅ Da nap trong so thanh cong (100% khop mo hinh)!")
-                num_classes = cfg.get("num_classes", 1)
-                class_names = cfg.get("class_names", [])
-                print(f"\n   Model info:")
-                print(f"   - Output: {num_classes} logits (Multi-label: {', '.join(class_names)})")
-                print(f"   - Loss: BCEWithLogitsLoss")
-                print(f"   - Embedding dim: 256")
-            except RuntimeError as e:
-                print(f"⚠️  Canh bao: {str(e)}")
-                print(f"   Fallback: Load voi strict=False")
-                dummy_model.load_state_dict(state_dict, strict=False)
-        else:
-            print(f"⚠️  Khong tim thay {pretrained_path}")
-            print(f"   Dung trong so khoi tao ngau nhien.")
-
-        initial_weights = [val.cpu().numpy() for _, val in dummy_model.state_dict().items()]
-        initial_parameters = fl.common.ndarrays_to_parameters(initial_weights)
-
+    print(f"   Task:        {args.task}")
+    print(f"   Port:        {port}")
+    print(f"   Rounds:      {args.rounds}")
+    print(f"   Min clients: {args.min_fit_clients}")
+    print(f"   Min samples: {min_samples}")
+    print(f"   Job ID:      {args.job_id or 'N/A'}")
+    print(f"   Mode:        PROTOTYPE-ONLY sharing")
+    print(f"   What's synced: img_proj + aud_proj + prototypes")
+    print(f"   What's local:  encoder backbones (DenseNet121 features, ViT transformer)")
     print(f"{'='*70}\n")
 
-    strategy = SaveModelStrategy(
+    # Emit job start event
+    print(f"EVENT:job_started:{json.dumps(dict(task=args.task, job_id=args.job_id or 'unknown', rounds=args.rounds, min_clients=args.min_fit_clients, min_samples=min_samples, port=port, fl_mode='proto'))}")
+
+    # Build initial parameters
+    print(f"📦 Building initial parameters...")
+    initial_params, _ = build_initial_parameters(args.task, args.pretrained)
+
+    # Build strategy
+    strategy = SelectiveAggregationStrategy(
         task_key=args.task,
-        min_samples=selected_min_samples,
+        min_samples=min_samples,
         job_id=args.job_id,
         min_fit_clients=args.min_fit_clients,
         min_available_clients=args.min_available_clients,
-        initial_parameters=initial_parameters,
+        initial_parameters=initial_params,
     )
 
-    print(
-        f"Khoi dong FL Server {cfg['display_name']} tren cong {selected_port}... "
-        f"(So vong cau hinh: {args.rounds}, min_samples: {selected_min_samples})"
-    )
-    print(f"EVENT:server_ready:{json.dumps({'task': args.task, 'port': selected_port, 'job_id': args.job_id or 'unknown'})}")
+    print(f"\n✅ Server ready")
+    print(f"EVENT:server_ready:{json.dumps({'task': args.task, 'port': port, 'job_id': args.job_id or 'unknown'})}")
+    print(f"\nListening on 0.0.0.0:{port}...\n")
 
+    # Start Flower server
     fl.server.start_server(
-        server_address=f"0.0.0.0:{selected_port}",
+        server_address=f"0.0.0.0:{port}",
         config=fl.server.ServerConfig(num_rounds=args.rounds),
         strategy=strategy,
     )
 
-    print(f"EVENT:job_completed:{json.dumps({'task': args.task, 'job_id': args.job_id or 'unknown'})}")
+    print(f"EVENT:job_completed:{json.dumps(dict(task=args.task, job_id=args.job_id or 'unknown'))}")

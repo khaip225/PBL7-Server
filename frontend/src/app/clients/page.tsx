@@ -69,6 +69,7 @@ export default function ClientsPage() {
                   <span className={`px-2 py-0.5 rounded text-xs ${
                     client.task_type === "audio" ? "bg-purple-900/30 text-purple-400"
                     : client.task_type === "image" ? "bg-blue-900/30 text-blue-400"
+                    : client.task_type === "alignment" ? "bg-emerald-900/30 text-emerald-400"
                     : "bg-gray-800 text-gray-400"
                   }`}>
                     {client.task_type ?? "đa năng"}

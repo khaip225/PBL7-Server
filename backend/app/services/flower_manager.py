@@ -42,7 +42,10 @@ class FlowerProcessManager:
     async def start_job(self, job: TrainingJob, pretrained_override: str | None = None) -> FlowerProcess:
         cfg = TASK_CONFIG[job.task_type.value]
         port = job.flower_config.get("port", cfg["default_port"])
-        pretrained = pretrained_override or job.model_config.get("pretrained_path") or cfg["default_pretrained"]
+        # Prototype FL: pretrained checkpoints come from Kaggle stage3 training
+        # (stage3_image_encoder.pth, stage3_audio_encoder.pth, stage3_prototypes.pth)
+        # or from a previous FL aggregation (best_global_*_proto.pth)
+        pretrained = pretrained_override or job.model_config.get("pretrained_path") or cfg.get("default_pretrained")
 
         # Write runtime config
         config_path = Path("flower_server") / "run_config.json"
@@ -54,6 +57,7 @@ class FlowerProcessManager:
             "strategy_params": job.strategy_params,
             "min_samples": job.min_samples,
             "pretrained_path": pretrained,
+            "fl_mode": cfg.get("fl_mode", "proto"),
         }
         config_path.write_text(json.dumps(run_config, indent=2))
 
@@ -69,12 +73,10 @@ class FlowerProcessManager:
             "--config-path", str(config_path),
             "--job-id", str(job.id),
         ]
-        if pretrained:
+        if pretrained and os.path.exists(pretrained):
             cmd.extend(["--pretrained", pretrained])
-
-        fl_mode = cfg.get("fl_mode")
-        if fl_mode:
-            cmd.extend(["--fl-mode", fl_mode])
+        elif pretrained:
+            print(f"  ⚠️  Pretrained path not found: {pretrained} — using random init")
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
