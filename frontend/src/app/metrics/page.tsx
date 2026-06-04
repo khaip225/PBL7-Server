@@ -1,13 +1,44 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { TrainingJob, RoundMetrics } from "@/lib/types";
+import type { TrainingJob, RoundMetrics, PrototypeEvolution } from "@/lib/types";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+
+// Color palette for 7 prototypes
+const PROTO_COLORS: Record<string, string> = {
+  p_normal_img: "#22d3ee",
+  p_normal_aud: "#a78bfa",
+  p_pneumonia: "#ef4444",
+  p_copd: "#f97316",
+  p_fibrosis: "#8b5cf6",
+  p_crackle: "#06b6d4",
+  p_wheeze: "#eab308",
+};
+const PROTO_LABELS: Record<string, string> = {
+  p_normal_img: "Normal (Img)",
+  p_normal_aud: "Normal (Aud)",
+  p_pneumonia: "Pneumonia",
+  p_copd: "COPD",
+  p_fibrosis: "Fibrosis",
+  p_crackle: "Crackle",
+  p_wheeze: "Wheeze",
+};
+
+// Per-class AUROC colors
+const classColors: Record<string, string> = {
+  Crackle: "#06b6d4",
+  Wheeze: "#eab308",
+  Pneumonia: "#ef4444",
+  COPD_Emphysema: "#f97316",
+  Fibrosis: "#8b5cf6",
+  normal: "#22d3ee",
+};
 
 export default function MetricsPage() {
   const [jobs, setJobs] = useState<TrainingJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<string>("");
   const [rounds, setRounds] = useState<RoundMetrics[]>([]);
+  const [protoEvolution, setProtoEvolution] = useState<PrototypeEvolution | null>(null);
 
   useEffect(() => {
     api.jobs.list({ limit: "50" }).then((res) => {
@@ -22,8 +53,16 @@ export default function MetricsPage() {
     api.metrics.convergence(selectedJob).then((data) => {
       setRounds(data.rounds || []);
     }).catch(() => {});
+    // Also fetch prototype evolution for alignment jobs
+    api.metrics.prototypeEvolution(selectedJob).then((data) => {
+      setProtoEvolution(data);
+    }).catch(() => { setProtoEvolution(null); });
   }, [selectedJob]);
 
+  const selectedJobObj = jobs.find((j) => j.id === selectedJob);
+  const isAlignmentJob = selectedJobObj?.task_type === "alignment";
+
+  // --- Chart data ---
   const chartData = rounds.map((r) => ({
     round: r.round_number,
     loss: r.loss != null ? Number(r.loss.toFixed(4)) : null,
@@ -32,7 +71,21 @@ export default function MetricsPage() {
     clients: r.num_clients,
   }));
 
-  // Per-class AUROC for the latest round
+  // --- Prototype similarity evolution data (for alignment jobs) ---
+  const protoChartData = rounds
+    .filter((r) => r.prototype_data != null)
+    .map((r) => ({
+      round: r.round_number,
+      ...Object.fromEntries(
+        Object.entries(r.prototype_data ?? {})
+          .filter(([k]) => ["crackle_pneumonia", "crackle_fibrosis", "wheeze_copd", "normal_img_aud"].includes(k))
+          .map(([k, v]) => [k, Number(v)]),
+      ),
+    }));
+
+  const hasProtoData = protoChartData.length > 0 && Object.keys(protoChartData[0] ?? {}).length > 1;
+
+  // --- Per-class AUROC ---
   const latestRound = rounds.length > 0 ? rounds[rounds.length - 1] : null;
   const perClassAuroc = latestRound?.per_class_auroc
     ? Object.entries(latestRound.per_class_auroc).map(([cls, val]) => ({
@@ -41,14 +94,8 @@ export default function MetricsPage() {
       }))
     : [];
 
-  // Bar colors for per-class
-  const classColors: Record<string, string> = {
-    Crackle: "#06b6d4",
-    Wheeze: "#eab308",
-    Pneumonia: "#ef4444",
-    COPD_Emphysema: "#f97316",
-    Fibrosis: "#8b5cf6",
-  };
+  // --- Prototype similarity in latest round ---
+  const latestProto = latestRound?.prototype_data ?? null;
 
   return (
     <div className="space-y-6">
@@ -61,7 +108,7 @@ export default function MetricsPage() {
         >
           <option value="">Select job...</option>
           {jobs.map((j) => (
-            <option key={j.id} value={j.id}>{j.name} ({j.status})</option>
+            <option key={j.id} value={j.id}>{j.name} ({j.task_type} · {j.status})</option>
           ))}
         </select>
       </div>
@@ -74,14 +121,47 @@ export default function MetricsPage() {
               <p className="text-xs text-gray-500">Total Rounds</p>
               <p className="text-2xl font-bold text-white">{rounds.length}</p>
             </div>
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="text-xs text-gray-500">Best AUROC</p>
-              <p className="text-2xl font-bold text-green-400">
-                {rounds.length > 0
-                  ? `${Math.max(...rounds.filter(r => r.auroc_macro != null).map(r => r.auroc_macro! * 100), 0).toFixed(1)}%`
-                  : "-"}
-              </p>
-            </div>
+
+            {isAlignmentJob ? (
+              <>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <p className="text-xs text-gray-500">Normal Bridge</p>
+                  <p className="text-2xl font-bold text-cyan-400">
+                    {latestProto?.normal_img_aud != null
+                      ? Number(latestProto.normal_img_aud).toFixed(3)
+                      : "-"}
+                  </p>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <p className="text-xs text-gray-500">Wheeze↔COPD</p>
+                  <p className="text-2xl font-bold text-amber-400">
+                    {latestProto?.wheeze_copd != null
+                      ? Number(latestProto.wheeze_copd).toFixed(3)
+                      : "-"}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <p className="text-xs text-gray-500">Best AUROC</p>
+                  <p className="text-2xl font-bold text-green-400">
+                    {rounds.length > 0
+                      ? `${Math.max(...rounds.filter(r => r.auroc_macro != null).map(r => r.auroc_macro! * 100), 0).toFixed(1)}%`
+                      : "-"}
+                  </p>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <p className="text-xs text-gray-500">Latest Accuracy</p>
+                  <p className="text-2xl font-bold text-blue-400">
+                    {latestRound?.accuracy != null
+                      ? `${(latestRound.accuracy * 100).toFixed(1)}%`
+                      : "-"}
+                  </p>
+                </div>
+              </>
+            )}
+
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
               <p className="text-xs text-gray-500">Best Loss</p>
               <p className="text-2xl font-bold text-red-400">
@@ -90,18 +170,11 @@ export default function MetricsPage() {
                   : "-"}
               </p>
             </div>
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="text-xs text-gray-500">Latest Accuracy</p>
-              <p className="text-2xl font-bold text-blue-400">
-                {latestRound?.accuracy != null
-                  ? `${(latestRound.accuracy * 100).toFixed(1)}%`
-                  : "-"}
-              </p>
-            </div>
           </div>
 
-          {/* Charts: Loss + AUROC */}
+          {/* Charts: Loss + (AUROC or Prototype Similarity) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Loss Curve — always shown */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-400 mb-4">Loss Curve</h3>
               <ResponsiveContainer width="100%" height={300}>
@@ -117,27 +190,49 @@ export default function MetricsPage() {
               </ResponsiveContainer>
             </div>
 
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-gray-400 mb-4">AUROC Curve (Macro)</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                  <XAxis dataKey="round" stroke="#6b7280" fontSize={12} />
-                  <YAxis stroke="#6b7280" fontSize={12} domain={[0, 100]} />
-                  <Tooltip
-                    contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "8px", fontSize: "12px" }}
-                  />
-                  <Legend />
-                  <Line type="monotone" dataKey="auroc" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} name="AUROC %" />
-                  {chartData.some(d => d.accuracy != null) && (
-                    <Line type="monotone" dataKey="accuracy" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} name="Accuracy %" strokeDasharray="5 5" />
-                  )}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            {/* Second chart: AUROC (classification) or Prototype Similarities (alignment) */}
+            {isAlignmentJob && hasProtoData ? (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-gray-400 mb-4">Prototype Similarity Evolution</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={protoChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                    <XAxis dataKey="round" stroke="#6b7280" fontSize={12} />
+                    <YAxis stroke="#6b7280" fontSize={12} domain={[-0.2, 1]} />
+                    <Tooltip
+                      contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "8px", fontSize: "12px" }}
+                    />
+                    <Legend />
+                    <Line type="monotone" dataKey="normal_img_aud" stroke="#22d3ee" strokeWidth={2} dot={{ r: 3 }} name="Normal Bridge" />
+                    <Line type="monotone" dataKey="wheeze_copd" stroke="#eab308" strokeWidth={2} dot={{ r: 3 }} name="Wheeze↔COPD" />
+                    <Line type="monotone" dataKey="crackle_pneumonia" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} name="Crackle↔Pneumonia" />
+                    <Line type="monotone" dataKey="crackle_fibrosis" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 3 }} name="Crackle↔Fibrosis" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-gray-400 mb-4">AUROC Curve (Macro)</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                    <XAxis dataKey="round" stroke="#6b7280" fontSize={12} />
+                    <YAxis stroke="#6b7280" fontSize={12} domain={[0, 100]} />
+                    <Tooltip
+                      contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "8px", fontSize: "12px" }}
+                    />
+                    <Legend />
+                    <Line type="monotone" dataKey="auroc" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} name="AUROC %" />
+                    {chartData.some(d => d.accuracy != null) && (
+                      <Line type="monotone" dataKey="accuracy" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} name="Accuracy %" strokeDasharray="5 5" />
+                    )}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
-          {/* Per-class AUROC bar */}
+          {/* Per-class AUROC (classification only) */}
           {perClassAuroc.length > 0 && (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-400 mb-4">
@@ -165,6 +260,45 @@ export default function MetricsPage() {
             </div>
           )}
 
+          {/* Prototype pairwise similarities (alignment only) */}
+          {isAlignmentJob && latestProto && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-gray-400 mb-4">
+                Prototype Pairwise Similarities (Round {latestRound?.round_number})
+              </h3>
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                {["crackle_pneumonia", "crackle_fibrosis", "wheeze_copd", "pneumonia_fibrosis", "crackle_wheeze", "normal_img_aud"].map((pair) => {
+                  const val = latestProto[pair];
+                  return (
+                    <div key={pair} className="bg-gray-800/50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 mb-1">{pair.replace(/_/g, " ")}</p>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`h-2 rounded-full transition-all`}
+                          style={{
+                            width: `${Math.max(0, Math.min(100, ((Number(val) || 0) + 0.3) * 130))}%`,
+                            backgroundColor: (Number(val) || 0) < 0 ? "#ef4444" : (Number(val) || 0) < 0.3 ? "#f97316" : "#22c55e",
+                          }}
+                        />
+                        <span className="text-sm font-mono text-gray-300">{(Number(val) || 0).toFixed(3)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Prototype norms */}
+                {Object.entries(latestProto)
+                  .filter(([k]) => k.startsWith("norm_"))
+                  .slice(0, 7)
+                  .map(([k, v]) => (
+                    <div key={k} className="bg-gray-800/50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 mb-1">{k.replace("norm_", "‖")}‖</p>
+                      <span className="text-sm font-mono text-gray-300">{Number(v).toFixed(4)}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           {/* Communication Stats Table */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
             <h3 className="text-sm font-semibold text-gray-400 mb-4">Communication Stats</h3>
@@ -176,8 +310,15 @@ export default function MetricsPage() {
                     <th className="p-3">Clients</th>
                     <th className="p-3">Skipped</th>
                     <th className="p-3">Loss</th>
-                    <th className="p-3">AUROC</th>
-                    <th className="p-3">Accuracy</th>
+                    {!isAlignmentJob && (
+                      <>
+                        <th className="p-3">AUROC</th>
+                        <th className="p-3">Accuracy</th>
+                      </>
+                    )}
+                    {isAlignmentJob && (
+                      <th className="p-3">Proto Similarities</th>
+                    )}
                     <th className="p-3">Duration</th>
                     <th className="p-3">Aggregated At</th>
                   </tr>
@@ -189,12 +330,23 @@ export default function MetricsPage() {
                       <td className="p-3">{r.num_clients}</td>
                       <td className="p-3 text-gray-500">{r.num_skipped}</td>
                       <td className="p-3 font-mono text-red-400">{r.loss?.toFixed(4) ?? "-"}</td>
-                      <td className="p-3 font-mono text-green-400">
-                        {r.auroc_macro != null ? `${(r.auroc_macro * 100).toFixed(1)}%` : "-"}
-                      </td>
-                      <td className="p-3 font-mono text-blue-400">
-                        {r.accuracy != null ? `${(r.accuracy * 100).toFixed(1)}%` : "-"}
-                      </td>
+                      {!isAlignmentJob && (
+                        <>
+                          <td className="p-3 font-mono text-green-400">
+                            {r.auroc_macro != null ? `${(r.auroc_macro * 100).toFixed(1)}%` : "-"}
+                          </td>
+                          <td className="p-3 font-mono text-blue-400">
+                            {r.accuracy != null ? `${(r.accuracy * 100).toFixed(1)}%` : "-"}
+                          </td>
+                        </>
+                      )}
+                      {isAlignmentJob && (
+                        <td className="p-3 font-mono text-xs text-cyan-400">
+                          {r.prototype_data
+                            ? `N-Aud:${Number(r.prototype_data.normal_img_aud)?.toFixed(2) ?? "-"} W-COPD:${Number(r.prototype_data.wheeze_copd)?.toFixed(2) ?? "-"}`
+                            : "-"}
+                        </td>
+                      )}
                       <td className="p-3 text-gray-500">{r.duration_seconds ? `${r.duration_seconds.toFixed(1)}s` : "-"}</td>
                       <td className="p-3 text-gray-500 text-xs">{new Date(r.aggregated_at).toLocaleString()}</td>
                     </tr>

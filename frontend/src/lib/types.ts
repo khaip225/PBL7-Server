@@ -1,4 +1,4 @@
-export type TaskType = "audio" | "image";
+export type TaskType = "audio" | "image" | "alignment";
 export type JobStatus = "draft" | "pending" | "running" | "completed" | "stopped" | "failed";
 export type ClientStatus = "online" | "offline" | "idle" | "training";
 export type AggregationStrategy = "fedavg" | "fedprox" | "fedadam" | "custom";
