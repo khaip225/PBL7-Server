@@ -492,15 +492,7 @@ if __name__ == "__main__":
     print(f"{'='*70}\n")
 
     # Emit job start event
-    print(f"EVENT:job_started:{json.dumps({
-        'task': args.task,
-        'job_id': args.job_id or 'unknown',
-        'rounds': args.rounds,
-        'min_clients': args.min_fit_clients,
-        'min_samples': min_samples,
-        'port': port,
-        'fl_mode': 'proto',
-    })}")
+    print(f"EVENT:job_started:{json.dumps(dict(task=args.task, job_id=args.job_id or 'unknown', rounds=args.rounds, min_clients=args.min_fit_clients, min_samples=min_samples, port=port, fl_mode='proto'))}")
 
     # Build initial parameters
     print(f"📦 Building initial parameters...")
@@ -527,4 +519,4 @@ if __name__ == "__main__":
         strategy=strategy,
     )
 
-    print(f"EVENT:job_completed:{json.dumps({'task': args.task, 'job_id': args.job_id or 'unknown'})}")
+    print(f"EVENT:job_completed:{json.dumps(dict(task=args.task, job_id=args.job_id or 'unknown'))}")
