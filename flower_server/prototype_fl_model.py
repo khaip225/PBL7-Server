@@ -34,8 +34,8 @@ class FLPrototypeModel(nn.Module):
     def __init__(self, image_pretrained_path=None, audio_pretrained_path=None):
         super().__init__()
 
-        self.image_encoder = DenseNet121MultiLabel(num_classes=3, pretrained=True)
-        self.audio_encoder = ASTMultiLabel(num_classes=2, pretrained=True)
+        self.image_encoder = DenseNet121MultiLabel(num_classes=4, pretrained=True)
+        self.audio_encoder = ASTMultiLabel(num_classes=3, pretrained=True)
 
         if image_pretrained_path and os.path.exists(image_pretrained_path):
             state = torch.load(image_pretrained_path, map_location="cpu")
