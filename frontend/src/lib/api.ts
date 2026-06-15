@@ -84,6 +84,7 @@ export const api = {
     get: (key: string) => request<any>(`/api/settings/${key}`),
     update: (key: string, data: any) => request<any>(`/api/settings/${key}`, { method: "PUT", body: JSON.stringify(data) }),
     delete: (key: string) => request<any>(`/api/settings/${key}`, { method: "DELETE" }),
+    reset: () => request<any>("/api/settings/reset", { method: "POST" }),
   },
   health: () => request<any>("/api/health"),
   auth: {

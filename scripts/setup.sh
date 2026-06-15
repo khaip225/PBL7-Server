@@ -25,10 +25,8 @@ until docker compose -f docker/docker-compose.yml exec -T postgres pg_isready -U
   sleep 2
 done
 
-echo "Running migrations..."
-cd backend && alembic upgrade head && cd ..
-
-echo "Seeding default data..."
+echo "Running DB init (tables created at app startup)..."
+# TODO: Initialize Alembic when ready: cd backend && alembic init -t async && alembic upgrade head
 python scripts/seed_db.py
 
 echo "=== Setup complete ==="

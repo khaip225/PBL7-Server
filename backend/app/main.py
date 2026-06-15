@@ -1,8 +1,9 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from .config import get_settings
+from .config import get_settings, validate_settings_on_startup
 from .database import engine, Base, async_session
 from .api.router import api_router
 from .api.auth import router as auth_router
@@ -14,6 +15,7 @@ from .services.auth_service import seed_default_admin
 from .services.client_service import ClientService
 from shared.types import WSEventType
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
@@ -107,8 +109,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 if job_id:
                     await ws_manager.unsubscribe(session_id, job_id)
     except WebSocketDisconnect:
-        pass
+        logger.debug("WebSocket client disconnected normally")
     except Exception:
-        pass
+        logger.exception("WebSocket error for session %s", session_id)
     finally:
         await ws_manager.disconnect(session_id)

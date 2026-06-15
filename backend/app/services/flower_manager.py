@@ -178,16 +178,32 @@ class FlowerProcessManager:
         await self._cleanup(job_id, "completed")
 
     async def _on_job_failed(self, job_id: uuid.UUID, returncode: int):
+        # Try to save last checkpoint path before marking failed
+        last_checkpoint = None
+        try:
+            import glob as _glob
+            model_dir = Path("aggregated_models")
+            if model_dir.exists():
+                checkpoints = sorted(_glob.glob(str(model_dir / "*_round_*.pth")), reverse=True)
+                if checkpoints:
+                    last_checkpoint = checkpoints[0]
+        except Exception:
+            pass
+
         async with self._db_factory() as db:
             job = await db.get(TrainingJob, job_id)
             if job:
                 job.status = JobStatus.FAILED
                 job.completed_at = datetime.now(timezone.utc)
+                if last_checkpoint:
+                    job.model_config = (job.model_config or {}) | {"last_checkpoint": last_checkpoint}
                 await db.commit()
 
         await ws_manager.broadcast(WSEvent(
             type=WSEventType.JOB_FAILED,
-            payload={"job_id": str(job_id), "returncode": returncode, "message": f"Flower process exited with code {returncode}"}
+            payload={"job_id": str(job_id), "returncode": returncode,
+                     "last_checkpoint": last_checkpoint,
+                     "message": f"Flower process exited with code {returncode}"}
         ))
         await self._cleanup(job_id, "failed")
 

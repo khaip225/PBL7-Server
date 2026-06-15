@@ -100,17 +100,13 @@ class ClientService:
 
     async def mark_stale_offline(self, timeout_seconds: int = 60) -> int:
         """Mark clients as OFFLINE if no heartbeat within timeout_seconds."""
-        cutoff = datetime.now(timezone.utc)
-        # Use Python to filter (SQLAlchemy can't easily add timedelta in all DBs)
+        from sqlalchemy import text
         q = select(Client).where(
-            Client.status.in_([ClientStatus.ONLINE, ClientStatus.TRAINING, ClientStatus.IDLE])
+            Client.status.in_([ClientStatus.ONLINE, ClientStatus.TRAINING, ClientStatus.IDLE]),
+            text(f"last_heartbeat < NOW() - INTERVAL '{timeout_seconds} seconds' OR last_heartbeat IS NULL"),
         )
         result = await self.db.execute(q)
-        stale_clients = [
-            c for c in result.scalars().all()
-            if c.last_heartbeat is None
-            or (cutoff - c.last_heartbeat).total_seconds() > timeout_seconds
-        ]
+        stale_clients = list(result.scalars().all())
         for client in stale_clients:
             client.status = ClientStatus.OFFLINE
         if stale_clients:

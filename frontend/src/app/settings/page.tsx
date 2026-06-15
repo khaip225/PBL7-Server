@@ -35,7 +35,7 @@ export default function SettingsPage() {
 
   async function handleReset() {
     if (!confirm("Reset all settings to defaults?")) return;
-    await fetch("http://localhost:8000/api/settings/reset", { method: "POST" });
+    await api.settings.reset();
     const updated = await api.settings.list();
     setSettings(updated);
   }
