@@ -72,7 +72,7 @@ export default function ClientsPage() {
                     : client.task_type === "alignment" ? "bg-emerald-900/30 text-emerald-400"
                     : "bg-gray-800 text-gray-400"
                   }`}>
-                    {client.task_type ?? "đa năng"}
+                    {client.task_type ?? "generic"}
                   </span>
                 </td>
                 <td className="p-4 text-gray-400 text-xs">
