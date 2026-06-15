@@ -12,10 +12,6 @@ class ModelConfig(BaseModel):
     mu: float = 0.001
 
 
-class FlowerConfig(BaseModel):
-    port: int | None = None
-
-
 class JobCreate(BaseModel):
     name: str
     task_type: TaskType

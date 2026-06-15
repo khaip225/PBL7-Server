@@ -42,44 +42,7 @@ if os.path.exists(_client_path) and _client_path not in sys.path:
 # Import shared components from Client (single source of truth)
 from shared.encoder_models import DenseNet121Encoder, ASTEncoder
 from shared.momentum_prototype import MomentumPrototypeModule
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Task Configuration
-# ═══════════════════════════════════════════════════════════════════════════
-
-TASK_CONFIG = {
-    "audio": {
-        "display_name": "Audio Prototype FL",
-        "default_port": 8080,
-        "num_classes": 3,       # normal, crackle, wheeze
-        "class_names": ["normal", "crackle", "wheeze"],
-        "min_samples": 100,
-        "round_prefix": "audio_proto",
-        "best_model_file": "best_global_audio_proto.pth",
-        "fl_mode": "proto",
-    },
-    "image": {
-        "display_name": "Image Prototype FL",
-        "default_port": 8081,
-        "num_classes": 4,       # Normal, Pneumonia, COPD, Fibrosis
-        "class_names": ["Normal", "Pneumonia", "COPD_Emphysema", "Fibrosis"],
-        "min_samples": 100,
-        "round_prefix": "image_proto",
-        "best_model_file": "best_global_image_proto.pth",
-        "fl_mode": "proto",
-    },
-    "alignment": {
-        "display_name": "Prototype Alignment FL",
-        "default_port": 8082,
-        "num_classes": 0,
-        "class_names": [],
-        "min_samples": 50,
-        "round_prefix": "alignment_proto",
-        "best_model_file": "best_global_prototypes.pth",
-        "fl_mode": "proto",
-    },
-}
+from shared.config import TASK_CONFIG
 
 
 # ═══════════════════════════════════════════════════════════════════════════
