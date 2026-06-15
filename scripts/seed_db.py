@@ -13,7 +13,9 @@ from shared.types import TaskType, ClientStatus, JobStatus, AggregationStrategy
 from shared.config import DEFAULT_SETTINGS
 import uuid
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://pbl7:pbl7_secret@localhost:5432/pbl7_fl")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is required. Set it before running this script.")
 
 
 async def seed():

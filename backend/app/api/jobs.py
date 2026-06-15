@@ -1,3 +1,4 @@
+import os
 from uuid import UUID
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -8,6 +9,14 @@ from ..services.flower_manager import flower_manager
 from ..schemas.job import JobCreate, JobUpdate, JobResponse, JobListResponse
 from shared.types import JobStatus
 from shared.config import TASK_CONFIG
+
+
+def _resolve_vps_host() -> str:
+    """Resolve VPS host from environment. Falls back to VPS_IP if VPS_DOMAIN not set."""
+    domain = os.getenv("VPS_DOMAIN", "").rstrip("/").replace("http://", "").replace("https://", "")
+    if domain:
+        return domain
+    return os.getenv("VPS_IP", "localhost")
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -78,7 +87,7 @@ async def join_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "job_id": str(job.id),
         "task_type": job.task_type.value,
         "num_rounds": job.num_rounds,
-        "server_address": f"20.249.212.81:{port}",
+        "server_address": f"{_resolve_vps_host()}:{port}",
         "port": port,
     }
 
@@ -131,11 +140,29 @@ async def start_job(job_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{job_id}/stop")
-async def stop_job(job_id: str):
+async def stop_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    # Idempotent: nếu job không chạy thì vẫn trả về success
+    # (client có thể gọi stop nhiều lần mà không bị lỗi)
+    svc = JobService(db)
+    job = await svc.get_job(UUID(job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Nếu DB vẫn ghi RUNNING nhưng process thực tế đã chết
+    # (crash, OOM kill, Flower exit bất thường) → sửa status
+    if job.status == JobStatus.RUNNING:
+        job.status = JobStatus.STOPPED
+        job.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        # Vẫn thử dừng process nếu còn zombie
+        await flower_manager.stop_job(UUID(job_id), graceful=True)
+        return {"message": "Job stopped (was running in DB but process not found)", "job_id": job_id}
+
     success = await flower_manager.stop_job(UUID(job_id), graceful=True)
-    if not success:
-        raise HTTPException(status_code=404, detail="Job not running")
-    return {"message": "Job stopped", "job_id": job_id}
+    if success:
+        return {"message": "Job stopped", "job_id": job_id}
+
+    return {"message": "Job was not running", "job_id": job_id, "status": job.status.value}
 
 
 @router.delete("/{job_id}")

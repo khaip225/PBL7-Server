@@ -7,6 +7,8 @@ class WSClient {
   private handlers: Map<string, Set<EventHandler>> = new Map();
   private url: string;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelay = 1000;
+  private maxReconnectDelay = 30000;
 
   constructor() {
     if (typeof window !== "undefined") {
@@ -37,8 +39,14 @@ class WSClient {
         if (allHandlers) allHandlers.forEach((h) => h(msg));
       } catch {}
     };
+    this.ws.onopen = () => {
+      // Reset backoff on successful connection
+      this.reconnectDelay = 1000;
+    };
     this.ws.onclose = () => {
-      this.reconnectTimer = setTimeout(() => this.connect(), 3000);
+      const jitter = Math.random() * 1000;
+      this.reconnectTimer = setTimeout(() => this.connect(), this.reconnectDelay + jitter);
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
     };
   }
 

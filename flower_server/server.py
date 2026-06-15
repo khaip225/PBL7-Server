@@ -170,6 +170,13 @@ class SelectiveAggregationStrategy(fl.server.strategy.FedAvg):
         failures: list[BaseException],
     ) -> tuple[fl.common.Parameters | None, dict]:
         """Run selective FedAvg aggregation for one round."""
+        # --- Log failures (disconnected clients) ---
+        if failures:
+            print(f"[{self.task_cfg['display_name']}] Round {server_round}: "
+                  f"⚠️  {len(failures)} client(s) disconnected!")
+            for i, exc in enumerate(failures):
+                print(f"  ❌ Failure {i+1}: {type(exc).__name__}: {exc}")
+
         # --- Filter by min_samples ---
         eligible = []
         skipped = []
@@ -186,8 +193,16 @@ class SelectiveAggregationStrategy(fl.server.strategy.FedAvg):
                   f"SKIP {len(skipped)} clients below {self.min_samples} samples → {info}")
 
         if len(eligible) < self.min_fit_clients:
+            skip_data = {
+                "task": self.task_key,
+                "round": server_round,
+                "eligible": len(eligible),
+                "min_required": self.min_fit_clients,
+                "reason": f"need {self.min_fit_clients} clients, got {len(eligible)}",
+            }
             print(f"[{self.task_cfg['display_name']}] Round {server_round}: "
                   f"only {len(eligible)} eligible (< {self.min_fit_clients}), skip aggregation.")
+            print(f"EVENT:round_skipped:{json.dumps(skip_data)}")
             return None, {}
 
         # --- Extract modality info from each client ---
