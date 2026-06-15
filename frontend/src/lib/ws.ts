@@ -63,14 +63,6 @@ class WSClient {
     this.handlers.get(eventType)!.add(handler);
     return () => this.handlers.get(eventType)?.delete(handler);
   }
-
-  disconnect() {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    this.ws?.close();
-  }
 }
 
 export const wsClient = typeof window !== "undefined" ? new WSClient() : null;

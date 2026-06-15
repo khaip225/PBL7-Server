@@ -4,26 +4,6 @@ import { api } from "@/lib/api";
 import type { TrainingJob, RoundMetrics, PrototypeEvolution } from "@/lib/types";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
-// Color palette for 7 prototypes
-const PROTO_COLORS: Record<string, string> = {
-  p_normal_img: "#22d3ee",
-  p_normal_aud: "#a78bfa",
-  p_pneumonia: "#ef4444",
-  p_copd: "#f97316",
-  p_fibrosis: "#8b5cf6",
-  p_crackle: "#06b6d4",
-  p_wheeze: "#eab308",
-};
-const PROTO_LABELS: Record<string, string> = {
-  p_normal_img: "Normal (Img)",
-  p_normal_aud: "Normal (Aud)",
-  p_pneumonia: "Pneumonia",
-  p_copd: "COPD",
-  p_fibrosis: "Fibrosis",
-  p_crackle: "Crackle",
-  p_wheeze: "Wheeze",
-};
-
 // Per-class AUROC colors
 const classColors: Record<string, string> = {
   Crackle: "#06b6d4",

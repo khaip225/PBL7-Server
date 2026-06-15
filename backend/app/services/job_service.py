@@ -80,11 +80,5 @@ class JobService:
             "progress_pct": round(completed / job.num_rounds * 100, 1) if job.num_rounds > 0 else 0,
         }
 
-    async def get_overview_stats(self) -> dict:
-        active = (await self.db.execute(
-            select(func.count()).where(TrainingJob.status == JobStatus.RUNNING)
-        )).scalar() or 0
-        completed = (await self.db.execute(
-            select(func.count()).where(TrainingJob.status == JobStatus.COMPLETED)
-        )).scalar() or 0
-        return {"active_jobs": active, "completed_jobs": completed}
+
+

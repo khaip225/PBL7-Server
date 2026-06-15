@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { wsClient } from "@/lib/ws";
 import type { WSMessage } from "@/lib/types";
 
@@ -24,20 +24,5 @@ export function useWebSocket(jobId?: string) {
     };
   }, [jobId]);
 
-  const clear = useCallback(() => setMessages([]), []);
-
-  return { messages, connected, clear };
-}
-
-export function useWSEvent(eventType: string, jobId?: string) {
-  const [lastEvent, setLastEvent] = useState<WSMessage | null>(null);
-
-  useEffect(() => {
-    if (!wsClient) return;
-    wsClient.subscribe(jobId);
-    const unsub = wsClient.on(eventType, (msg) => setLastEvent(msg));
-    return () => { unsub(); };
-  }, [eventType, jobId]);
-
-  return lastEvent;
+  return { messages, connected };
 }

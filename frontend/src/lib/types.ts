@@ -49,18 +49,8 @@ export interface RoundMetrics {
   num_clients: number;
   num_skipped: number;
   duration_seconds: number | null;
-  client_metrics: ClientRoundMetric[];
+  client_metrics: Record<string, unknown>[];
   aggregated_at: string;
-}
-
-export interface ClientRoundMetric {
-  client_id: string;
-  client_name: string;
-  num_samples: number;
-  loss: number;
-  accuracy: number | null;
-  auroc_macro: number | null;
-  per_class_auroc: Record<string, number>;
 }
 
 export interface PrototypeEvolution {
@@ -81,15 +71,6 @@ export interface Checkpoint {
   sha256_hash: string | null;
   is_best: boolean;
   is_active: boolean;
-  created_at: string;
-}
-
-export interface EventLog {
-  id: string;
-  job_id: string | null;
-  event_type: string;
-  severity: "info" | "warning" | "error" | "critical";
-  payload: Record<string, unknown>;
   created_at: string;
 }
 
@@ -114,10 +95,4 @@ export interface UserResponse {
   username: string;
   display_name: string;
   is_active: boolean;
-}
-
-export interface TokenResponse {
-  access_token: string;
-  token_type: string;
-  user: UserResponse;
 }

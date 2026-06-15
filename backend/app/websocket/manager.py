@@ -55,13 +55,6 @@ class ConnectionManager:
         for sid in dead:
             await self.disconnect(sid)
 
-    async def send_personal(self, session_id: str, event: WSEvent):
-        ws = self._connections.get(session_id)
-        if ws:
-            try:
-                await ws.send_json(event.to_dict())
-            except Exception:
-                await self.disconnect(session_id)
 
     @property
     def active_count(self) -> int:

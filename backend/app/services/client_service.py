@@ -113,7 +113,5 @@ class ClientService:
             await self.db.commit()
         return len(stale_clients)
 
-    async def get_overview_stats(self) -> dict:
-        total = (await self.db.execute(select(func.count()).select_from(Client))).scalar() or 0
-        online = (await self.db.execute(select(func.count()).where(Client.status == ClientStatus.ONLINE))).scalar() or 0
-        return {"total_clients": total, "online_clients": online}
+
+
