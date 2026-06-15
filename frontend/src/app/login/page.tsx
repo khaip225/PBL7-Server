@@ -16,7 +16,7 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!username.trim() || !password.trim()) {
-      setError("Vui lòng nhập username và password");
+      setError("Please enter your username and password");
       return;
     }
     setError("");
@@ -25,7 +25,7 @@ export default function LoginPage() {
       await login(username, password);
       router.push("/");
     } catch (err: any) {
-      setError(err.message || "Đăng nhập thất bại");
+      setError(err.message || "Login failed");
     } finally {
       setSubmitting(false);
     }
@@ -140,7 +140,7 @@ export default function LoginPage() {
               ) : (
                 <LogIn className="h-5 w-5" />
               )}
-              {submitting ? "Đang đăng nhập..." : "Đăng nhập"}
+              {submitting ? "Signing in..." : "Sign In"}
             </button>
           </form>
 
